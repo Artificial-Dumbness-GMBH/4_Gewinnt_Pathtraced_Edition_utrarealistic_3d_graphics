@@ -2,7 +2,6 @@ package de.viergewinnt.renderer;
 
 import de.viergewinnt.Game.*;
 import de.viergewinnt.scene.*;
-import de.viergewinnt.renderer.*;
 import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.*;
 import static org.lwjgl.glfw.GLFW.*;

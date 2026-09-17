@@ -6,7 +6,8 @@ und setzt mit dem nächsten Spieler nach dem letzten erfolgreichen Zug fort.
 
 ## Start
 
-JDK 25 und Maven installieren. Das Projekt kompiliert Java-25-Quellcode.
+JDK 17 oder neuer und Maven installieren. Das Projekt kompiliert mit `--release 17`;
+Java 25 ist nicht erforderlich.
 Ein OpenGL-4.6-Kontext wird bevorzugt, mit Fallback auf 4.3 (Compute/SSBO-Mindestanforderung).
 Windows-Natives sind wie bisher voreingestellt.
 
@@ -96,8 +97,9 @@ Java-17-Compiler und den echten LWJGL-3.4.3-Bibliotheken kompiliert; BoardTest u
 BVHTest erfolgreich. LWJGL/EGL-Smoke-Test auf llvmpipe erfolgreich, einschließlich
 BVH-/Brute-Force-Bildvergleich für alle sechs Kombinationen aus 8×8, 16×8,
 16×16 und RGBA32F/RGBA16F. Der Maven-Lauf konnte in der Prüfungsumgebung wegen
-DNS-Problemen beim Abhängigkeitsdownload nicht abgeschlossen werden; der konfigurierte
-JDK-25-Build wurde dort nicht ausgeführt. Interaktive Eingabe, Windows-Treiber und
+DNS-Problemen beim Abhängigkeitsdownload nicht abgeschlossen werden.
+Die direkte Kompilierung mit `--release 17`
+war erfolgreich. Interaktive Eingabe, Windows-Treiber und
 Intel-UHD-Leistung müssen zusätzlich auf der Zielhardware geprüft werden.
 
 Dieser Stand setzt das im Auftrag priorisierte Zwischenziel um. Noch nicht enthalten:
