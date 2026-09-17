@@ -7,7 +7,7 @@ layout(std430,binding=0) readonly buffer Vertices { vec4 vertices[]; };
 layout(std430,binding=1) readonly buffer Triangles { uvec4 triangles[]; };
 layout(std430,binding=2) readonly buffer Materials { Material materials[]; };
 layout(std430,binding=3) readonly buffer Nodes { Node nodes[]; };
-uniform int frameIndex,maxBounces,triangleCount,bruteForce,gradient;
+uniform int frameIndex,samplesPerFrame,maxBounces,triangleCount,bruteForce,gradient;
 uniform vec3 cameraPosition,cameraForward,cameraRight,cameraUp;
 uint rng;
 float randomFloat() {
@@ -60,12 +60,27 @@ vec3 cosineHemisphere(vec3 normal) {
     vec3 tangent=normalize(cross(abs(normal.y)<.99?vec3(0,1,0):vec3(1,0,0),normal));
     return normalize(tangent*(r*cos(phi))+cross(normal,tangent)*(r*sin(phi))+normal*sqrt(max(0,1-r*r)));
 }
+vec3 directLight(vec3 origin,vec3 normal,vec3 baseColor) {
+    vec3 lightPosition=vec3(0,7.9,0);
+    vec3 toLight=lightPosition-origin;
+    float distanceToLight=length(toLight);
+    vec3 lightDirection=toLight/distanceToLight;
+    float cosine=max(dot(normal,lightDirection),0);
+    if(cosine<=0) return vec3(0);
+    float blockerDistance;vec3 blockerNormal;
+    int blocker=intersectScene(origin+normal*.002,lightDirection,blockerDistance,blockerNormal);
+    if(blocker>=0&&blockerDistance<distanceToLight-.01) return vec3(0);
+    vec3 lightRadiance=vec3(6,5.5,4.5);
+    return baseColor*lightRadiance*cosine/(1+distanceToLight*distanceToLight*.08);
+}
 vec3 trace(vec3 origin,vec3 direction) {
     vec3 radiance=vec3(0),throughput=vec3(1);
     for(int bounce=0;bounce<maxBounces;bounce++) {
         float distance;vec3 normal;int hit=intersectScene(origin,direction,distance,normal);
         if(hit<0) { radiance+=throughput*mix(vec3(.12,.15,.2),vec3(.55,.7,1),clamp(direction.y*.5+.5,0,1));break; }
         Material m=materials[triangles[hit].w];radiance+=throughput*m.emission.rgb;
+        radiance+=throughput*m.baseColor.rgb*vec3(.055,.065,.085);
+        radiance+=throughput*directLight(origin+direction*distance,normal,m.baseColor.rgb);
         // Lambert BRDF*cos/pdf simplifies to baseColor with cosine sampling.
         throughput*=m.baseColor.rgb;
         if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
@@ -80,11 +95,15 @@ vec3 trace(vec3 origin,vec3 direction) {
 void main() {
     ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(accumulation);
     if(any(greaterThanEqual(pixel,size))) return;
-    rng=(uint(pixel.x)+uint(pixel.y)*uint(size.x))^((uint(frameIndex)+1u)*277803737u);
-    vec2 jitter=vec2(randomFloat(),randomFloat());
-    vec2 p=(vec2(pixel)+jitter)/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
-    vec3 ray=normalize(cameraForward+.57735026919*(p.x*cameraRight+p.y*cameraUp));
-    vec3 sampleColor=gradient!=0?vec3(vec2(pixel)/vec2(size),.2):trace(cameraPosition,ray);
+    vec3 sampleColor=vec3(0);
+    for(int sampleIndex=0;sampleIndex<samplesPerFrame;sampleIndex++) {
+        rng=(uint(pixel.x)+uint(pixel.y)*uint(size.x))^((uint(frameIndex*samplesPerFrame+sampleIndex)+1u)*277803737u);
+        vec2 jitter=vec2(randomFloat(),randomFloat());
+        vec2 p=(vec2(pixel)+jitter)/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
+        vec3 ray=normalize(cameraForward+.57735026919*(p.x*cameraRight+p.y*cameraUp));
+        sampleColor+=gradient!=0?vec3(vec2(pixel)/vec2(size),.2):trace(cameraPosition,ray);
+    }
+    sampleColor/=float(samplesPerFrame);
     // Never read undefined texture contents after allocation/reset.
     vec3 mean=sampleColor;
     if(frameIndex>0) { vec3 previous=imageLoad(accumulation,pixel).rgb;mean=previous+(sampleColor-previous)/float(frameIndex+1); }

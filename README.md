@@ -10,6 +10,20 @@ JDK 25 und Maven installieren. Das Projekt kompiliert Java-25-Quellcode.
 Ein OpenGL-4.6-Kontext wird bevorzugt, mit Fallback auf 4.3 (Compute/SSBO-Mindestanforderung).
 Windows-Natives sind wie bisher voreingestellt.
 
+### Dedizierte GPU unter Windows
+
+Ein Java-Prozess kann den OpenGL-Adapter nicht zuverlässig selbst gegen die
+Windows-Grafikpräferenz erzwingen. Das Spiel prüft deshalb nach dem Start den
+tatsächlich verwendeten Hersteller und Renderer und gibt ihn aus. Für die
+dedizierte GPU muss `java.exe` beziehungsweise `javaw.exe` in Windows unter
+**Einstellungen → System → Anzeige → Grafik** als Desktop-App hinzugefügt und
+auf **Hohe Leistung** gestellt werden. Bei NVIDIA-Laptops kann zusätzlich im
+NVIDIA-Control-Panel unter **Manage 3D settings → Program Settings** die
+verwendete `javaw.exe` auf die NVIDIA-Hochleistungs-GPU gesetzt werden.
+Im Terminal muss danach eine Ausgabe wie `GPU: NVIDIA ...` oder `GPU: AMD ...`
+erscheinen, nicht `Microsoft Basic Render Driver`, `GDI Generic`, `llvmpipe`
+oder `Software`.
+
 ```sh
 mvn test
 mvn compile exec:java
@@ -27,7 +41,7 @@ Die existierende Spiellogik enthält noch keine Gewinnererkennung.
 Scene/Camera/Mesh → CPU-BVH (binäre 12-Bin-SAH) → einmaliger SSBO-Upload →
 Compute-Pathtracing → progressiver Mittelwert → Reinhard-Tonemapping → sRGB-Ausgabe.
 
-- Standard: maximal 960×540, 8×8 Workgroup, 3 Bounces, 1 Sample/Frame, RGBA32F.
+- Standard: maximal 960×540, 8×8 Workgroup, 1 Bounce, 8 Samples/Frame, RGBA32F plus kantenbewusster Bilateral-Denoiser. Der rauschärmere Direktlichtmodus ist für Kamerabewegung voreingestellt. Für mehr indirekte Beleuchtung kann `-Dpt.bounces=3` verwendet werden; die Sample-Anzahl ist bis maximal 16 einstellbar.
 - Dreiecksgeometrie für Brett, Boden, Lichtfläche und zylindrische Spielsteine.
 - Diffuse Lambert-Materialien, Emission, Himmel, Cosinus-Hemisphere-Sampling;
   Russian Roulette ab dem dritten Treffer für längere Pfade.
@@ -60,6 +74,8 @@ mvn compile exec:java -Dpt.gradient=true
 mvn compile exec:java -Dpt.bruteForce=true
 # VSync aus, FPS/spp zusätzlich auf stdout
 mvn compile exec:java -Dpt.benchmark=true -Dpt.groupX=16 -Dpt.groupY=8 -Dpt.bounces=4
+# Mehr Rauschreduktion auf einer ausreichend schnellen GPU
+mvn compile exec:java -Dpt.samplesPerFrame=4
 # Auflösungsobergrenze und experimentelles Half-Float
 mvn compile exec:java -Dpt.width=1920 -Dpt.height=1080 -Dpt.half=true
 # Nach 8 Frames beenden; GL-Fehler führen zum Fehlschlag

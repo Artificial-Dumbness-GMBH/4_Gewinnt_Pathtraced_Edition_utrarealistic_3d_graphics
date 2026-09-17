@@ -7,9 +7,9 @@ import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_NORMAL;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_CORE_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_DEBUG_CONTEXT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_FORWARD_COMPAT;
-import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_CORE_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_PRESS;
 import static org.lwjgl.glfw.GLFW.GLFW_RESIZABLE;
@@ -88,7 +88,6 @@ public class Window {
             int smokeFrames=Integer.getInteger("pt.smokeFrames",0),totalFrames=0;
             boolean paused=false;
             boolean escapeHeld=false;
-            int cameraResetCooldown=0;
             try(PathTracer tracer=new PathTracer(Scene.fromBoard(activeBoard))) {
                 while(!glfwWindowShouldClose(window)) {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
@@ -108,14 +107,7 @@ public class Window {
                     if(!paused) {
                         cameraChanged = camera.update(window,dt);
                         if(cameraChanged) {
-                            if(cameraResetCooldown <= 0) {
-                                tracer.reset();
-                                cameraResetCooldown = 3;
-                            } else {
-                                cameraResetCooldown--;
-                            }
-                        } else {
-                            cameraResetCooldown = 0;
+                            tracer.reset();
                         }
                     }
 

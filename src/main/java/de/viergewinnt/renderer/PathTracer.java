@@ -1,20 +1,41 @@
 package de.viergewinnt.renderer;
 
+import static org.lwjgl.opengl.GL11.GL_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_2D;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_MAG_FILTER;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_S;
+import static org.lwjgl.opengl.GL11.GL_TEXTURE_WRAP_T;
+import static org.lwjgl.opengl.GL11.glBindTexture;
+import static org.lwjgl.opengl.GL11.glDeleteTextures;
+import static org.lwjgl.opengl.GL11.glGenTextures;
+import static org.lwjgl.opengl.GL11.glTexParameteri;
+import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
+import static org.lwjgl.opengl.GL15.GL_READ_WRITE;
+import static org.lwjgl.opengl.GL30.GL_RGBA16F;
+import static org.lwjgl.opengl.GL30.GL_RGBA32F;
+import static org.lwjgl.opengl.GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT;
+import static org.lwjgl.opengl.GL42.GL_TEXTURE_FETCH_BARRIER_BIT;
+import static org.lwjgl.opengl.GL42.glBindImageTexture;
+import static org.lwjgl.opengl.GL42.glMemoryBarrier;
+import static org.lwjgl.opengl.GL42.glTexStorage2D;
+import static org.lwjgl.opengl.GL43.glDispatchCompute;
+
 import de.viergewinnt.gpu.GPUScene;
-import de.viergewinnt.scene.*;
-import static org.lwjgl.opengl.GL43.*;
+import de.viergewinnt.scene.Camera;
+import de.viergewinnt.scene.Scene;
 
 public final class PathTracer implements AutoCloseable {
     private final ComputeShader shader;
     private final ScreenRenderer screen;
     private GPUScene scene;
     private int texture,width,height,frameIndex;
-    private final int groupX,groupY,bounces,maxWidth,maxHeight;
+    private final int groupX,groupY,bounces,maxWidth,maxHeight,samplesPerFrame;
     private final boolean half,bruteForce;
     public PathTracer(Scene initialScene) {
         groupX=option("pt.groupX",8,8,16);groupY=option("pt.groupY",8,8,16);
         if(groupX==8&&groupY==16) throw new IllegalArgumentException("Use 8x8, 16x8 or 16x16");
-        bounces=option("pt.bounces",3,1,8);maxWidth=option("pt.width",960,64,3840);maxHeight=option("pt.height",540,64,2160);
+        bounces=option("pt.bounces",1,1,8);samplesPerFrame=option("pt.samplesPerFrame",8,1,16);maxWidth=option("pt.width",960,64,3840);maxHeight=option("pt.height",540,64,2160);
         half=Boolean.getBoolean("pt.half");bruteForce=Boolean.getBoolean("pt.bruteForce");
         shader=new ComputeShader(groupX,groupY,half);
         ScreenRenderer createdScreen=null;
@@ -42,7 +63,7 @@ public final class PathTracer implements AutoCloseable {
         }
         // Keep integer conversion exact in the float running mean; half is experimental.
         if(frameIndex>=16000000) reset();
-        scene.bind();shader.use();shader.integer("frameIndex",frameIndex);shader.integer("maxBounces",bounces);
+        scene.bind();shader.use();shader.integer("frameIndex",frameIndex);shader.integer("samplesPerFrame",samplesPerFrame);shader.integer("maxBounces",bounces);
         shader.integer("triangleCount",scene.triangleCount);shader.integer("bruteForce",bruteForce?1:0);
         shader.integer("gradient",Boolean.getBoolean("pt.gradient")?1:0);
         shader.vector("cameraPosition",camera.position());shader.vector("cameraForward",camera.forward());
