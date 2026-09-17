@@ -13,7 +13,11 @@
 	<steamworks4j-server.version>1.10.0</steamworks4j-server.version>
 	<lwjgl.natives>natives-windows</lwjgl.natives>
 </properties>
-<mainclass>de.viergewinnt.main</mainclass>
+
+<mainclass>
+	de.viergewinnt.main
+</mainclass>
+
 <dependencyManagement>
 	<dependencies>
 		<dependency>
