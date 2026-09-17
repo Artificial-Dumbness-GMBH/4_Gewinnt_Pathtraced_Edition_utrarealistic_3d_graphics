@@ -1,4 +1,4 @@
-package main.java.de.viergewinnt;
+package de.viergewinnt;
 public class main {
 
     public static void main(String[] args) {
