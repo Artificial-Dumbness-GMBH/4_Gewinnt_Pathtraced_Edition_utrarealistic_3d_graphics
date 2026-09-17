@@ -26,13 +26,18 @@ public class Window {
             throw new IllegalStateException("Fenster konnte nicht erstellt werden.");
         }
 
+        GLFW.glfwSetWindowPos(window, 320, 180);
         GLFW.glfwMakeContextCurrent(window);
         GLFW.glfwSwapInterval(1);
         GL.createCapabilities();
         GL11.glClearColor(0.05f, 0.05f, 0.05f, 1.0f);
 
         while (!GLFW.glfwWindowShouldClose(window)) {
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
+            if (GLFW.glfwGetKey(window, GLFW.GLFW_KEY_ESCAPE) == GLFW.GLFW_PRESS) {
+                GLFW.glfwSetWindowShouldClose(window, true);
+            }
+
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             GLFW.glfwSwapBuffers(window);
             GLFW.glfwPollEvents();
         }
