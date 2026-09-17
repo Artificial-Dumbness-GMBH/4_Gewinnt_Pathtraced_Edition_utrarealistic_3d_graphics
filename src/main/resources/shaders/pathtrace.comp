@@ -1,0 +1,92 @@
+#version 430 core
+layout(local_size_x=GROUP_X,local_size_y=GROUP_Y) in;
+layout(IMAGE_FORMAT,binding=0) uniform image2D accumulation;
+struct Material { vec4 baseColor; vec4 emission; };
+struct Node { vec4 lower; vec4 upper; ivec4 data; };
+layout(std430,binding=0) readonly buffer Vertices { vec4 vertices[]; };
+layout(std430,binding=1) readonly buffer Triangles { uvec4 triangles[]; };
+layout(std430,binding=2) readonly buffer Materials { Material materials[]; };
+layout(std430,binding=3) readonly buffer Nodes { Node nodes[]; };
+uniform int frameIndex,maxBounces,triangleCount,bruteForce,gradient;
+uniform vec3 cameraPosition,cameraForward,cameraRight,cameraUp;
+uint rng;
+float randomFloat() {
+    rng=rng*747796405u+2891336453u;
+    uint word=((rng>>((rng>>28u)+4u))^rng)*277803737u;
+    return float((word>>22u)^word)*(1.0/4294967296.0);
+}
+bool boxHit(Node n,vec3 origin,vec3 direction,float closest) {
+    float lo=.0001,hi=closest;
+    for(int a=0;a<3;a++) {
+        if(abs(direction[a])<1e-8) {
+            if(origin[a]<n.lower[a]||origin[a]>n.upper[a]) return false;
+        } else {
+            float x=(n.lower[a]-origin[a])/direction[a],y=(n.upper[a]-origin[a])/direction[a];
+            lo=max(lo,min(x,y));hi=min(hi,max(x,y));if(hi<lo) return false;
+        }
+    }
+    return true;
+}
+void triangleHit(int i,vec3 origin,vec3 direction,inout float closest,inout int hit,inout vec3 normal) {
+    uvec4 t=triangles[i];vec3 a=vertices[t.x].xyz,e1=vertices[t.y].xyz-a,e2=vertices[t.z].xyz-a;
+    vec3 p=cross(direction,e2);float det=dot(e1,p);if(abs(det)<1e-8) return;
+    vec3 s=origin-a;float u=dot(s,p)/det;if(u<0||u>1) return;
+    vec3 q=cross(s,e1);float v=dot(direction,q)/det;if(v<0||u+v>1) return;
+    float distance=dot(e2,q)/det;
+    if(distance>.0001&&distance<closest) { closest=distance;hit=i;normal=normalize(cross(e1,e2)); }
+}
+int intersectScene(vec3 origin,vec3 direction,out float distance,out vec3 normal) {
+    distance=1e30;int hit=-1;normal=vec3(0);
+    if(bruteForce!=0) {
+        for(int i=0;i<triangleCount;i++) triangleHit(i,origin,direction,distance,hit,normal);
+    } else {
+        uint stack[32];int count=1;stack[0]=0u;
+        while(count>0) {
+            Node n=nodes[stack[--count]];
+            if(!boxHit(n,origin,direction,distance)) continue;
+            if(n.data.w>0) {
+                for(int j=0;j<n.data.w;j++) triangleHit(n.data.z+j,origin,direction,distance,hit,normal);
+            } else {
+                // Builder caps depth at 30; at most 31 pending entries.
+                stack[count++]=uint(n.data.y);stack[count++]=uint(n.data.x);
+            }
+        }
+    }
+    if(dot(normal,direction)>0) normal=-normal;
+    return hit;
+}
+vec3 cosineHemisphere(vec3 normal) {
+    float r=sqrt(randomFloat()),phi=6.28318530718*randomFloat();
+    vec3 tangent=normalize(cross(abs(normal.y)<.99?vec3(0,1,0):vec3(1,0,0),normal));
+    return normalize(tangent*(r*cos(phi))+cross(normal,tangent)*(r*sin(phi))+normal*sqrt(max(0,1-r*r)));
+}
+vec3 trace(vec3 origin,vec3 direction) {
+    vec3 radiance=vec3(0),throughput=vec3(1);
+    for(int bounce=0;bounce<maxBounces;bounce++) {
+        float distance;vec3 normal;int hit=intersectScene(origin,direction,distance,normal);
+        if(hit<0) { radiance+=throughput*mix(vec3(.12,.15,.2),vec3(.55,.7,1),clamp(direction.y*.5+.5,0,1));break; }
+        Material m=materials[triangles[hit].w];radiance+=throughput*m.emission.rgb;
+        // Lambert BRDF*cos/pdf simplifies to baseColor with cosine sampling.
+        throughput*=m.baseColor.rgb;
+        if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
+        if(bounce>=2) {
+            float survival=clamp(max(throughput.r,max(throughput.g,throughput.b)),.05,.95);
+            if(randomFloat()>survival) break;throughput/=survival;
+        }
+        origin+=direction*distance+normal*.001;direction=cosineHemisphere(normal);
+    }
+    return radiance;
+}
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(accumulation);
+    if(any(greaterThanEqual(pixel,size))) return;
+    rng=(uint(pixel.x)+uint(pixel.y)*uint(size.x))^((uint(frameIndex)+1u)*277803737u);
+    vec2 jitter=vec2(randomFloat(),randomFloat());
+    vec2 p=(vec2(pixel)+jitter)/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
+    vec3 ray=normalize(cameraForward+.57735026919*(p.x*cameraRight+p.y*cameraUp));
+    vec3 sampleColor=gradient!=0?vec3(vec2(pixel)/vec2(size),.2):trace(cameraPosition,ray);
+    // Never read undefined texture contents after allocation/reset.
+    vec3 mean=sampleColor;
+    if(frameIndex>0) { vec3 previous=imageLoad(accumulation,pixel).rgb;mean=previous+(sampleColor-previous)/float(frameIndex+1); }
+    imageStore(accumulation,pixel,vec4(mean,1));
+}
