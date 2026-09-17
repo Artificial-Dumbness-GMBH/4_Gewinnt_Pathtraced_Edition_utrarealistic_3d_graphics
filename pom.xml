@@ -420,6 +420,13 @@
             <configuration><mainClass>${exec.mainClass}</mainClass></configuration>
             <executions>
                 <execution>
+                    <id>board-regression</id><phase>test</phase><goals><goal>java</goal></goals>
+                    <configuration>
+                        <mainClass>de.viergewinnt.Game.BoardTest</mainClass>
+                        <classpathScope>test</classpathScope>
+                    </configuration>
+                </execution>
+                <execution>
                     <id>bvh-regression</id><phase>test</phase><goals><goal>java</goal></goals>
                     <configuration>
                         <mainClass>de.viergewinnt.bvh.BVHTest</mainClass>
