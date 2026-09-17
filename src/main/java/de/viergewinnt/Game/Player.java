@@ -1,6 +1,6 @@
 package de.viergewinnt.Game;
 
-enum Player {
+public enum Player {
 
     Blue, 
     Red
