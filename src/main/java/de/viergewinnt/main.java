@@ -1,9 +1,10 @@
 package de.viergewinnt;
-public class main {
 
+import de.viergewinnt.window.Window;
+
+public class Main {
     public static void main(String[] args) {
-        de.viergewinnt.window.Window window = new de.viergewinnt.window.Window();
+        Window window = new Window();
         window.create();
     }
-
 }
