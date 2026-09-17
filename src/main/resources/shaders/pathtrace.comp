@@ -13,7 +13,8 @@ uint rng;
 float randomFloat() {
     rng=rng*747796405u+2891336453u;
     uint word=((rng>>((rng>>28u)+4u))^rng)*277803737u;
-    return float((word>>22u)^word)*(1.0/4294967296.0);
+    // Use exactly representable 24-bit integers so rounding never produces 1.0.
+    return float(((word>>22u)^word)>>8u)*(1.0/16777216.0);
 }
 bool boxHit(Node n,vec3 origin,vec3 direction,float closest) {
     float lo=.0001,hi=closest;

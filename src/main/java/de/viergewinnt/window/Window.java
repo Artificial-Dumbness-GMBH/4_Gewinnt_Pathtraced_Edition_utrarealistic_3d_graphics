@@ -30,7 +30,7 @@ public class Window {
             glfwMakeContextCurrent(window);glfwSwapInterval(Boolean.getBoolean("pt.benchmark")?0:1);
             if(!GL.createCapabilities().OpenGL43) throw new IllegalStateException("Compute Shader und SSBOs benötigen OpenGL 4.3+.");
             System.out.println("GPU: "+glGetString(GL_RENDERER)+" / "+glGetString(GL_VERSION));
-            Camera camera=new Camera();boolean[] keys=new boolean[Board.COLUMNS];Player turn=Player.Red;
+            Camera camera=new Camera();boolean[] keys=new boolean[Board.COLUMNS];boolean resetPressed=false;
             int[] width=new int[1],height=new int[1];double last=glfwGetTime(),titleTime=last;int frames=0;
             int smokeFrames=Integer.getInteger("pt.smokeFrames",0),totalFrames=0;
             try(PathTracer tracer=new PathTracer(Scene.fromBoard(board))) {
@@ -38,10 +38,13 @@ public class Window {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
                     if(glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS) glfwSetWindowShouldClose(window,true);
                     if(camera.update(window,dt)) tracer.reset();
+                    boolean restart=glfwGetKey(window,GLFW_KEY_R)==GLFW_PRESS;
+                    if(restart&&!resetPressed) { board.reset();tracer.setScene(Scene.fromBoard(board)); }
+                    resetPressed=restart;
                     for(int c=0;c<Board.COLUMNS;c++) {
                         boolean pressed=glfwGetKey(window,GLFW_KEY_1+c)==GLFW_PRESS;
-                        if(pressed&&!keys[c]&&board.dropPiece(c,turn)) {
-                            turn=turn==Player.Red?Player.Blue:Player.Red;tracer.setScene(Scene.fromBoard(board));
+                        if(pressed&&!keys[c]&&board.dropPiece(c,board.getNextPlayer())) {
+                            tracer.setScene(Scene.fromBoard(board));
                         }
                         keys[c]=pressed;
                     }
@@ -49,7 +52,9 @@ public class Window {
                     if(width[0]<=0||height[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
                     tracer.render(camera,width[0],height[0]);glfwSwapBuffers(window);frames++;totalFrames++;
                     if(now-titleTime>=1) {
-                        String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | WASD + rechte Maus | Spalte 1-7",frames/(now-titleTime),tracer.samples());
+                        String status=board.getWinner()!=null?(board.getWinner()==Player.Red?"Rot":"Blau")+" gewinnt!":
+                            board.isFull()?"Unentschieden":(board.getNextPlayer()==Player.Red?"Rot":"Blau")+" am Zug";
+                        String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | %s | %.1f FPS | %d spp | WASD + rechte Maus | Spalte 1-7 | R: Neustart",status,frames/(now-titleTime),tracer.samples());
                         glfwSetWindowTitle(window,title);
                         if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
                         frames=0;titleTime=now;

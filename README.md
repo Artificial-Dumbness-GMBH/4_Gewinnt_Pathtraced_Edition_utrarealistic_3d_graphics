@@ -1,8 +1,8 @@
 # 4 Gewinnt – Compute Pathtracing
 
-Die vorhandenen `Board`-/`Player`-Klassen bleiben unverändert. `Main` erzeugt wie zuvor
-sein Beispielbrett und öffnet danach den Renderer. `--console` führt nur das bisherige
-Konsolenbeispiel aus. `Window.create()` bleibt nutzbar; `create(Board)` übernimmt ein Brett.
+`Main` startet ein leeres Brett mit Rot am Zug. `--console` führt nur das bisherige
+Konsolenbeispiel aus. `Window.create()` bleibt nutzbar; `create(Board)` übernimmt ein Brett
+und setzt mit dem nächsten Spieler nach dem letzten erfolgreichen Zug fort.
 
 ## Start
 
@@ -20,7 +20,11 @@ mvn compile exec:java -Dlwjgl.natives=natives-linux
 
 WASD bewegt die Kamera; rechte Maustaste halten und Maus bewegen dreht sie.
 1–7 lässt abwechselnd rote/blaue Steine in die gewählte Spalte fallen; Escape beendet.
-Die existierende Spiellogik enthält noch keine Gewinnererkennung.
+Der Fenstertitel zeigt Spieler, Gewinner oder Unentschieden. Vier gleiche Steine
+horizontal, vertikal oder diagonal beenden die Partie; weitere Züge sind gesperrt.
+R startet ein neues Spiel. Ungültige Züge und volle Spalten wechseln den Spieler nicht.
+`Board.dropPiece(column, player)` erlaubt weiterhin explizite Farben für Szenenaufbau
+und Tests; die interaktive Eingabe verwendet `getNextPlayer()`.
 
 ## Implementierter Kern
 
@@ -77,7 +81,8 @@ Es werden keine ungemessenen Intel-UHD-Frameraten zugesichert.
 
 ## Tests und bewusst spätere Ausbaustufen
 
-`mvn test` führt einen CPU-Regressionstest aus: BVH-Blattabdeckung, Bounds, maximale
+`mvn test` prüft Spiellogik (ungültige Züge, Schwerkraft, Spielerwechsel, beide Farben
+in allen Gewinnrichtungen, Spielende, Unentschieden und Neustart) sowie BVH-Blattabdeckung, Bounds, maximale
 Tiefe, degenerierte Geometrie, leere Szene und 6000 deterministische Vergleiche
 von BVH gegen unabhängige Brute-Force-Treffertests. Ein optionaler Linux/EGL-Smoke-Test prüft echte LWJGL-Uploads, Rendering, Reset,
 Resize, endliche/nichtleere Ausgabe und pixelweisen BVH-/Brute-Force-Vergleich:
@@ -86,9 +91,13 @@ Resize, endliche/nichtleere Ausgabe und pixelweisen BVH-/Brute-Force-Vergleich:
 EGL_PLATFORM=surfaceless mvn test-compile exec:java -Dlwjgl.natives=natives-linux -Dexec.mainClass=de.viergewinnt.renderer.RendererSmokeTest -Dexec.classpathScope=test
 ```
 
-Validierung dieses Stands: Maven `test` erfolgreich; alle Java-Klassen mit `--release 25`
-kompiliert; sechs Compute-Varianten und die Ausgabe-Shader auf Mesa 4.5 kompiliert/gelinkt;
-LWJGL/EGL-Smoke-Test auf llvmpipe erfolgreich. Interaktive Eingabe, Windows-Treiber und
+Validierung der Fehlerkorrekturen: alle Haupt- und Testklassen direkt mit dem
+Java-17-Compiler und den echten LWJGL-3.4.3-Bibliotheken kompiliert; BoardTest und
+BVHTest erfolgreich. LWJGL/EGL-Smoke-Test auf llvmpipe erfolgreich, einschließlich
+BVH-/Brute-Force-Bildvergleich für alle sechs Kombinationen aus 8×8, 16×8,
+16×16 und RGBA32F/RGBA16F. Der Maven-Lauf konnte in der Prüfungsumgebung wegen
+DNS-Problemen beim Abhängigkeitsdownload nicht abgeschlossen werden; der konfigurierte
+JDK-25-Build wurde dort nicht ausgeführt. Interaktive Eingabe, Windows-Treiber und
 Intel-UHD-Leistung müssen zusätzlich auf der Zielhardware geprüft werden.
 
 Dieser Stand setzt das im Auftrag priorisierte Zwischenziel um. Noch nicht enthalten:
