@@ -6,7 +6,7 @@ Konsolenbeispiel aus. `Window.create()` bleibt nutzbar; `create(Board)` übernim
 
 ## Start
 
-JDK 17+ und Maven installieren. Das Projekt kompiliert weiterhin Java-8-Quellcode.
+JDK 25 und Maven installieren. Das Projekt kompiliert Java-25-Quellcode.
 Ein OpenGL-4.6-Kontext wird bevorzugt, mit Fallback auf 4.3 (Compute/SSBO-Mindestanforderung).
 Windows-Natives sind wie bisher voreingestellt.
 
@@ -86,7 +86,7 @@ Resize, endliche/nichtleere Ausgabe und pixelweisen BVH-/Brute-Force-Vergleich:
 EGL_PLATFORM=surfaceless mvn test-compile exec:java -Dlwjgl.natives=natives-linux -Dexec.mainClass=de.viergewinnt.renderer.RendererSmokeTest -Dexec.classpathScope=test
 ```
 
-Validierung dieses Stands: Maven `test` erfolgreich; alle Java-Klassen mit `--release 8`
+Validierung dieses Stands: Maven `test` erfolgreich; alle Java-Klassen mit `--release 25`
 kompiliert; sechs Compute-Varianten und die Ausgabe-Shader auf Mesa 4.5 kompiliert/gelinkt;
 LWJGL/EGL-Smoke-Test auf llvmpipe erfolgreich. Interaktive Eingabe, Windows-Treiber und
 Intel-UHD-Leistung müssen zusätzlich auf der Zielhardware geprüft werden.
