@@ -91,6 +91,7 @@ public class RendererSmokeTest {
   }
   System.out.println("Six format/workgroup variants passed");
   AtrousDenoiserTest.run();
+  de.viergewinnt.hud.HologramSmokeTest.run();
   glfwDestroyWindow(window);glfwTerminate();
  }
 }

@@ -13,13 +13,18 @@ public final class Camera {
     private float yaw=-112.62f,pitch=-3.52f;
     private double lastX,lastY;
     private boolean mouseInitialized;
+    private Vec3 forward,right,up;
+    private final double[] cursorX=new double[1],cursorY=new double[1];
+    public Camera() { updateBasis(); }
     public Vec3 position() { return position; }
-    public Vec3 forward() {
+    public Vec3 forward() { return forward; }
+    public Vec3 right() { return right; }
+    public Vec3 up() { return up; }
+    private void updateBasis() {
         double y=Math.toRadians(yaw),p=Math.toRadians(pitch);
-        return new Vec3((float)(Math.cos(y)*Math.cos(p)),(float)Math.sin(p),(float)(Math.sin(y)*Math.cos(p)));
+        forward=new Vec3((float)(Math.cos(y)*Math.cos(p)),(float)Math.sin(p),(float)(Math.sin(y)*Math.cos(p)));
+        right=forward.cross(new Vec3(0,1,0)).normalized();up=right.cross(forward).normalized();
     }
-    public Vec3 right() { return forward().cross(new Vec3(0,1,0)).normalized(); }
-    public Vec3 up() { return right().cross(forward()).normalized(); }
     public void resetMouseCursor(double centerX,double centerY) {
         lastX=centerX;lastY=centerY;mouseInitialized=true;
     }
@@ -31,10 +36,10 @@ public final class Camera {
     /** Mouse look is active whenever the cursor is captured; no right-click is required. */
     public boolean update(long window,float dt) {
         boolean changed=false;
-        double[] x=new double[1],y=new double[1];glfwGetCursorPos(window,x,y);
+        double[] x=cursorX,y=cursorY;glfwGetCursorPos(window,x,y);
         if(!mouseInitialized) resetMouseCursor(x[0],y[0]);
         if(x[0]!=lastX||y[0]!=lastY) {
-            yaw+=(float)(x[0]-lastX)*.12f;pitch=Math.max(-89,Math.min(89,pitch-(float)(y[0]-lastY)*.12f));changed=true;
+            yaw+=(float)(x[0]-lastX)*.12f;pitch=Math.max(-89,Math.min(89,pitch-(float)(y[0]-lastY)*.12f));updateBasis();changed=true;
         }
         lastX=x[0];lastY=y[0];
         Vec3 horizontalForward=new Vec3(forward().x,0,forward().z).normalized();

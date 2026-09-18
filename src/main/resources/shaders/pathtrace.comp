@@ -32,32 +32,56 @@ bool boxHit(Node n,vec3 origin,vec3 direction,float closest) {
     }
     return true;
 }
-void triangleHit(int i,vec3 origin,vec3 direction,inout float closest,inout int hit,inout vec3 normal) {
+float triangleDistance(int i,vec3 origin,vec3 direction) {
     uvec4 t=triangles[i];vec3 a=vertices[t.x].xyz,e1=vertices[t.y].xyz-a,e2=vertices[t.z].xyz-a;
-    vec3 p=cross(direction,e2);float det=dot(e1,p);if(abs(det)<1e-8) return;
-    vec3 s=origin-a;float u=dot(s,p)/det;if(u<0||u>1) return;
-    vec3 q=cross(s,e1);float v=dot(direction,q)/det;if(v<0||u+v>1) return;
+    vec3 p=cross(direction,e2);float det=dot(e1,p);if(abs(det)<1e-8) return 1e30;
+    vec3 s=origin-a;float u=dot(s,p)/det;if(u<0||u>1) return 1e30;
+    vec3 q=cross(s,e1);float v=dot(direction,q)/det;if(v<0||u+v>1) return 1e30;
     float distance=dot(e2,q)/det;
-    if(distance>.0001&&distance<closest) { closest=distance;hit=i;normal=normalize(cross(e1,e2)); }
+    return distance>.0001?distance:1e30;
+}
+void triangleHit(int i,vec3 origin,vec3 direction,inout float closest,inout int hit) {
+    float distance=triangleDistance(i,origin,direction);
+    if(distance<closest) { closest=distance;hit=i; }
+}
+// Shadow visibility only needs any blocker on the finite light segment.
+bool occluded(vec3 origin,vec3 direction,float limit) {
+    if(bruteForce!=0) {
+        for(int i=0;i<triangleCount;i++) if(triangleDistance(i,origin,direction)<limit) return true;
+    } else {
+        uint stack[32];int count=1;stack[0]=0u;
+        while(count>0) {
+            Node n=nodes[stack[--count]];
+            if(!boxHit(n,origin,direction,limit)) continue;
+            if(n.data.w>0) {
+                for(int j=0;j<n.data.w;j++) if(triangleDistance(n.data.z+j,origin,direction)<limit) return true;
+            } else { stack[count++]=uint(n.data.y);stack[count++]=uint(n.data.x); }
+        }
+    }
+    return false;
 }
 int intersectScene(vec3 origin,vec3 direction,out float distance,out vec3 normal) {
     distance=1e30;int hit=-1;normal=vec3(0);
     if(bruteForce!=0) {
-        for(int i=0;i<triangleCount;i++) triangleHit(i,origin,direction,distance,hit,normal);
+        for(int i=0;i<triangleCount;i++) triangleHit(i,origin,direction,distance,hit);
     } else {
         uint stack[32];int count=1;stack[0]=0u;
         while(count>0) {
             Node n=nodes[stack[--count]];
             if(!boxHit(n,origin,direction,distance)) continue;
             if(n.data.w>0) {
-                for(int j=0;j<n.data.w;j++) triangleHit(n.data.z+j,origin,direction,distance,hit,normal);
+                for(int j=0;j<n.data.w;j++) triangleHit(n.data.z+j,origin,direction,distance,hit);
             } else {
                 // Builder caps depth at 30; at most 31 pending entries.
                 stack[count++]=uint(n.data.y);stack[count++]=uint(n.data.x);
             }
         }
     }
-    if(dot(normal,direction)>0) normal=-normal;
+    if(hit>=0) {
+        uvec4 t=triangles[hit];vec3 a=vertices[t.x].xyz;
+        normal=normalize(cross(vertices[t.y].xyz-a,vertices[t.z].xyz-a));
+        if(dot(normal,direction)>0) normal=-normal;
+    }
     return hit;
 }
 vec3 cosineHemisphere(vec3 normal) {
@@ -127,9 +151,7 @@ vec3 directLight(vec3 point,vec3 n,vec3 v,vec3 base,float roughness,float metall
     vec3 target=lightPosition+vec3((2*randomFloat()-1)*lightSize.x,0,(2*randomFloat()-1)*lightSize.z);
     vec3 delta=target-point;float distanceToLight=length(delta);vec3 l=delta/distanceToLight;
     if(dot(n,l)<=0||l.y<=0) return vec3(0);
-    float distance;vec3 normal;
-    intersectScene(point+n*.001,l,distance,normal);
-    if(distance<distanceToLight-.003) return vec3(0);
+    if(occluded(point+n*.001,l,distanceToLight-.003)) return vec3(0);
     float pdf;vec3 f=brdf(n,v,l,base,roughness,metallic,pdf);
     float lp=lightPdf(point,target,l);
     // No BSDF continuation at the last bounce, so there is no competing estimator.
@@ -174,16 +196,18 @@ vec3 cameraRay(vec2 pixel,ivec2 size) {
 void main() {
     ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(accumulation);
     if(any(greaterThanEqual(pixel,size))) return;
-    // Deterministic primary-hit guides remain stable while samples accumulate.
-    vec3 guideRay=cameraRay(vec2(pixel)+.5,size),normal;float depth;
-    int hit=intersectScene(cameraPosition,guideRay,depth,normal);
-    vec3 albedo=vec3(0);float materialId=-1;
-    if(hit>=0) {
-        float roughness;materialId=float(triangles[hit].w);
-        albedo=surfaceColor(materials[triangles[hit].w],cameraPosition+guideRay*depth,roughness);
-    } else { depth=0; }
-    imageStore(normalDepth,pixel,vec4(normal,depth));
-    imageStore(albedoGuide,pixel,vec4(albedo,materialId));
+    // Guides are deterministic: refresh only after camera/scene/size/reset changes.
+    if(frameIndex==0) {
+        vec3 guideRay=cameraRay(vec2(pixel)+.5,size),normal;float depth;
+        int hit=intersectScene(cameraPosition,guideRay,depth,normal);
+        vec3 albedo=vec3(0);float materialId=-1;
+        if(hit>=0) {
+            float roughness;materialId=float(triangles[hit].w);
+            albedo=surfaceColor(materials[triangles[hit].w],cameraPosition+guideRay*depth,roughness);
+        } else { depth=0; }
+        imageStore(normalDepth,pixel,vec4(normal,depth));
+        imageStore(albedoGuide,pixel,vec4(albedo,materialId));
+    }
     vec3 sampleColor=vec3(0);
     for(int sampleIndex=0;sampleIndex<samplesPerFrame;sampleIndex++) {
         rng=(uint(pixel.x)+uint(pixel.y)*uint(size.x))^((uint(frameIndex*samplesPerFrame+sampleIndex)+1u)*277803737u);

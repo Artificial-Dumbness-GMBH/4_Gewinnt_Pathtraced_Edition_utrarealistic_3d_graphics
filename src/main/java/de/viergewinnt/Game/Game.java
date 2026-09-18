@@ -34,14 +34,12 @@ public class Game {
         if (board.hasWon(currentPlayer)) {
             winner = currentPlayer;
             gameOver = true;
-            System.out.println(currentPlayer + " GEWINNT!");
             return true;
         }
 
         if (board.isFull()) {
             winner = null;
             gameOver = true;
-            System.out.println("UNENTSCHIEDEN!");
             return true;
         }
 

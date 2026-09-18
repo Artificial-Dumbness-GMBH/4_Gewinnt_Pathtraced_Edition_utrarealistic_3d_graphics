@@ -440,6 +440,13 @@
                         <classpathScope>test</classpathScope>
                     </configuration>
                 </execution>
+                <execution>
+                    <id>hud-regression</id><phase>test</phase><goals><goal>java</goal></goals>
+                    <configuration>
+                        <mainClass>de.viergewinnt.hud.HUDTest</mainClass>
+                        <classpathScope>test</classpathScope>
+                    </configuration>
+                </execution>
             </executions>
         </plugin>
     </plugins>

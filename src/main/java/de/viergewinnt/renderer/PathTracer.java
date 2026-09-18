@@ -60,16 +60,21 @@ public final class PathTracer implements AutoCloseable {
     }
     public void setScene(Scene next) { GPUScene replacement=new GPUScene(next);scene.close();scene=replacement;reset(); }
     public void reset() { frameIndex=0;displayDirty=true; }
+    public int depthGuideTexture() { return normalDepth; }
     public RenderSettings settings() { return settings; }
     public void applySettings(RenderSettings next) {
         java.util.Objects.requireNonNull(next);
         if(!settings.sameSampling(next)) reset();
-        if(!settings.equals(next)) displayDirty=true;
+        if(settings.denoiser()!=next.denoiser()||settings.denoiseStrength()!=next.denoiseStrength()) displayDirty=true;
         settings=next;
     }
     public int samples() { return frameIndex*settings.samplesPerFrame(); }
     public void render(Camera camera,int framebufferWidth,int framebufferHeight) {
         if(framebufferWidth<=0||framebufferHeight<=0) return;
+        traceFrame(camera,framebufferWidth,framebufferHeight);
+        present(framebufferWidth,framebufferHeight,false);
+    }
+    private void traceFrame(Camera camera,int framebufferWidth,int framebufferHeight) {
         lastCamera=camera;
         Vec3 position=camera.position(),forward=camera.forward();
         if(different(position,lastPosition)||different(forward,lastForward)) reset();
@@ -98,7 +103,7 @@ public final class PathTracer implements AutoCloseable {
         glBindImageTexture(2,albedoGuide,0,false,0,GL_WRITE_ONLY,GL_RGBA16F);
         glDispatchCompute((width+groupX-1)/groupX,(height+groupY-1)/groupY,1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);
-        frameIndex++;displayDirty=true;present(framebufferWidth,framebufferHeight,false);
+        frameIndex++;displayDirty=true;
     }
     public void renderPauseOverlay(int framebufferWidth,int framebufferHeight) {
         if(texture!=0) present(framebufferWidth,framebufferHeight,true);
@@ -107,8 +112,9 @@ public final class PathTracer implements AutoCloseable {
         if(w<=0||h<=0) return;
         float scale=Math.min(1f,Math.min((float)settings.maxWidth()/w,(float)settings.maxHeight()/h));
         // Settle the frozen view, then reuse it without spending GPU time on tracing/filtering.
-        if(samples()<64||Math.max(1,Math.round(w*scale))!=width||Math.max(1,Math.round(h*scale))!=height)
-            render(camera,w,h);
+        if(samples()<64||different(camera.position(),lastPosition)||different(camera.forward(),lastForward)
+                ||Math.max(1,Math.round(w*scale))!=width||Math.max(1,Math.round(h*scale))!=height)
+            traceFrame(camera,w,h);
         renderPauseOverlay(w,h);
     }
     private void present(int w,int h,boolean paused) {

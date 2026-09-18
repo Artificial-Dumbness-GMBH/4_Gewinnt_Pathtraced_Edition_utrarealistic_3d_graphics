@@ -32,6 +32,27 @@ Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
 wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
 der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
+## Holografischer Spielstatus
+
+Über dem Brett schwebt jetzt eine transparente, räumlich verankerte Statusanzeige:
+**Rot/Blau ist am Zug**, **Rot/Blau gewinnt!** oder **Unentschieden**. Farbe und Text
+wechseln unmittelbar mit dem Spielzustand. Die Anzeige richtet sich zur Kamera,
+bleibt von beiden Seiten lesbar und wird durch die Szenentiefe verdeckt. Dezente
+Scanlinien und Leuchtränder laufen in einem separaten Zeichenpass, ohne das
+Pathtracing bei jedem Animationsframe zurückzusetzen. Text wird nur bei einer
+Statusänderung neu erzeugt und hochgeladen. Spielausgänge werden im Grafikspiel
+nicht mehr nur in die Konsole geschrieben; Hardware-/Diagnoselogs bleiben separat.
+
+![Hologramm mit Gewinneranzeige](docs/hologram-win.jpg)
+
+Der Renderer vermeidet wiederholte Guide-Berechnungen, bricht Schattenstrahlen
+am ersten Blocker ab und verwendet gefilterte Bilder bei Belichtungsänderungen
+weiter. Auflösung, Samplezahl und Bounce-Limit wurden für diese Optimierungen
+nicht reduziert; ein Upscaler wurde nicht hinzugefügt. Im lokalen festen
+320×180-Vergleich sank die Framezeit um 16,9 %, bei **byteidentischen HDR-Daten**.
+Messaufbau, Grenzen und Testbefehl stehen im
+[Validierungsbericht](docs/hologram-performance.md).
+
 ## Pausenmenü und Einstellungen
 
 Escape öffnet das neue Pausenmenü. Unter **Grafik** lassen sich Einstellungen
@@ -160,6 +181,7 @@ synchronisiert. Nach Reset wird kein undefinierter Akkumulationsinhalt gelesen.
 
 - `BVHTest`: Blattabdeckung, Bounds, Tiefe, degenerierte Geometrie, leere Szene
   und 6000 deterministische BVH-/Brute-Force-Strahlvergleiche.
+- `HUDTest`: Spielstatus für beide Farben, Gewinner, Unentschieden und Neustart.
 - `MenuSettingsTest`: Menüaktionen, Denoiser-Auswahl, Reglergrenzen, Tastaturfokus,
   HiDPI-/Fensterformat-Transformation, Settings-Roundtrip, beschädigte Einstellungen
   und begehbare Raumgrenzen.

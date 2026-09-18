@@ -50,6 +50,7 @@ import static org.lwjgl.opengl.GL11.glGetString;
 import de.viergewinnt.Game.Board;
 import de.viergewinnt.Game.Game;
 import de.viergewinnt.hud.HUD;
+import de.viergewinnt.hud.HologramRenderer;
 import de.viergewinnt.input.Input;
 import de.viergewinnt.renderer.PathTracer;
 import de.viergewinnt.scene.Camera;
@@ -103,7 +104,7 @@ public class Window {
             double last=glfwGetTime(),titleTime=last,lastMouseX=Double.NaN,lastMouseY=Double.NaN;
             int frames=0,totalFrames=0,smokeFrames=Integer.getInteger("pt.smokeFrames",0);
             boolean paused=false,escapeHeld=false,mouseHeld=false;
-            try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()),settings);MenuRenderer menuRenderer=new MenuRenderer()) {
+            try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()),settings);MenuRenderer menuRenderer=new MenuRenderer();HologramRenderer hologram=new HologramRenderer()) {
                 while(!glfwWindowShouldClose(window)) {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
                     glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);
@@ -147,8 +148,10 @@ public class Window {
                     }
                     mouseHeld=mouse;
                     if(glfwWindowShouldClose(window)) break;
-                    if(paused) { tracer.renderPaused(camera,width[0],height[0]);menuRenderer.render(menu,width[0],height[0]); }
+                    if(paused) tracer.renderPaused(camera,width[0],height[0]);
                     else tracer.render(camera,width[0],height[0]);
+                    hologram.render(game,camera,tracer.depthGuideTexture(),width[0],height[0],(float)(now%3600),paused);
+                    if(paused) menuRenderer.render(menu,width[0],height[0]);
                     glfwSwapBuffers(window);frames++;totalFrames++;
                     if(now-titleTime>=1) {
                         String state=paused?"PAUSE":HUD.getStatusText(game);
