@@ -75,10 +75,11 @@ float noise(vec3 p) {
 vec3 surfaceColor(Material m,vec3 p,out float roughness) {
     p*=m.surface.w;roughness=m.surface.x;
     if(m.surface.z==1) {
-        float grain=.5+.5*sin(p.z*38+noise(p*vec3(.5,2,3))*7);
+        float grain=.5+.5*sin(p.z*18+noise(p*vec3(.15,2,1.5))*3);
+        float broad=noise(p*vec3(.35,2,3));
         float pores=noise(p*vec3(3,18,55));
         roughness=clamp(roughness+(pores-.5)*.12,.08,1);
-        return m.baseColor.rgb*mix(.55,1.2,.65*grain+.35*pores);
+        return m.baseColor.rgb*mix(.72,1.05,.55*broad+.30*grain+.15*pores);
     }
     if(m.surface.z==2) {
         float mottling=.65+.35*noise(p*4);

@@ -3,9 +3,9 @@
 Ein spielbares Vier-Gewinnt mit progressivem OpenGL-Compute-Pathtracing,
 Metall-/Kunststoffmaterialien, prozeduralem Holz und Stein sowie geometriegestütztem Denoising.
 
-![PBR-Spielumgebung nach 14 Beispielzügen](docs/render-preview.png)
+![Zentraler Spieltisch im vergrößerten Raum](docs/room-preview.jpg)
 
-*Echter Renderer-Screenshot: 640×360, 192 spp, 3 Bounces; Beispielbrett mit 14 Zügen.*
+*Echter Renderer-Screenshot: intern 640×360, Ausgabe 1280×720, 100 spp, 3 Bounces und À-Trous; Beispielbrett mit 14 Zügen.*
 
 ## Start
 
@@ -32,6 +32,43 @@ Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
 wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
 der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
+## Pausenmenü und Einstellungen
+
+Escape öffnet das neue Pausenmenü. Unter **Grafik** lassen sich Einstellungen
+sofort ändern. Maus oder Tab/Pfeiltasten + Enter bedienen dieselben Controls;
+Escape geht aus Grafik zurück zur Spielseite und setzt von dort das Spiel fort.
+
+![Grafikeinstellungen im Spiel](docs/settings-preview.jpg)
+
+| Einstellung | Auswahl |
+|---|---|
+| Denoiser | **À-Trous · LWJGL** (Standard), **Eigener · Bilateral**, **Aus** |
+| Filterstärke | 25–200 %; bei ausgeschaltetem Denoiser deaktiviert |
+| Path-Bounces | 1–8 |
+| Samples / Frame | 1, 2, 4, 8, 16 |
+| Render-Auflösung | Obergrenze 640×360, 960×540, 1280×720, 1920×1080, 3840×2160 |
+| Belichtung | 0,25×–3× |
+
+**Standardwerte** stellt die Werkseinstellungen wieder her. Einstellungen werden
+atomar unter `~/.viergewinnt/render.properties` gespeichert (auch unter Windows
+im Benutzerverzeichnis). `-Dpt.settingsFile=...` wählt eine andere Datei.
+Explizite `-Dpt.*`-Startparameter haben beim Start Vorrang. Kann nicht gespeichert
+werden, zeigt das Menü „Nur für diese Sitzung“ an; die Steuerung bleibt nutzbar.
+Beschädigte Konfigurationsdateien führen zu Standardwerten statt zu einem Absturz.
+
+Denoiser, Filterstärke und Belichtung behalten die vorhandenen Rohsamples bei.
+Bounces, Samples/Frame und Auflösung setzen die Accumulation zurück. Während der
+Pause berechnet der Renderer maximal bis 64 spp weiter und friert das Bild danach
+ein; UI-Änderungen benötigen dann kein erneutes Pathtracing.
+
+Der zweite Filter ist eine angepasste, quelloffen mitgelieferte Implementierung
+von [LWJGLs À-Trous-Denoiser](https://github.com/LWJGL/lwjgl3-demos/blob/0846b5d965e3015c556ac26b802b63f8ea8aa129/res/org/lwjgl/demo/opengl/raytracing/tutorial5/atrous.fs.glsl).
+Er läuft in vier GPU-Durchläufen mit Schrittweiten 1, 2, 4, 8 und verwendet
+Farbe, Normale, Flächenabstand, Albedo und Material-ID als Kantenschutz.
+Originalshader, BSD-3-Clause-Lizenz und Änderungsnotiz liegen unter
+`src/main/resources/third-party/lwjgl-atrous/` und werden mit der Anwendung verpackt.
+Es handelt sich um einen räumlichen Wavelet-Filter, nicht um einen KI-Denoiser.
+
 ## Bildqualität und Umgebung
 
 - GGX-Mikrofacetten-BRDF mit Schlick-Fresnel, Smith-Masking und
@@ -44,10 +81,14 @@ der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 - Walnussholz mit Maserung und variabler Rauheit, Steinfliesen, dunkler
   Metallrahmen, Messingdetails und farbige Spielsteine mit abgeschrägtem Rand.
   Texturen werden im Weltkoordinatenraum berechnet: keine Downloads, keine UV-Nähte.
-- Tisch, Standfüße, Boden, Lamellenwand und seitliche Startperspektive.
-- Der 5×5-Bilateralfilter verwendet Normale, Tiefe, Albedo und Material-ID.
-  Die Filterstärke sinkt bei steigender Samplezahl, um Details zu erhalten.
-  Filmic-Tonemapping und eine einzige lineare → sRGB-Konvertierung folgen danach.
+- Ein geschlossener Raum mit **44×52 Welteinheiten** Grundfläche, Decke,
+  Wandverkleidung, umlaufenden Details und zentraler Deckenbeleuchtung.
+  Tisch und Spielfeld stehen bei **X=0, Z=0** auf einem zentralen Teppich.
+  Die Kamera kann um den Tisch herumgehen; Tisch und Außenwände begrenzen die Bewegung.
+- Der bisherige 5×5-Bilateralfilter bleibt als **Eigener** auswählbar; seine
+  Filterstärke sinkt bei steigender Samplezahl. Alternativ steht der mehrstufige
+  **À-Trous**-Filter zur Verfügung. Filmic-Tonemapping und eine einzige
+  lineare → sRGB-Konvertierung folgen danach.
 - Kamera-, Szenen- und Auflösungsänderungen setzen die Accumulation zurück.
   Der Samplezähler zeigt tatsächliche Samples pro Pixel, nicht Frames.
 - Pausenmenü und Klickbereiche verwenden das aktuelle Seitenverhältnis;
@@ -56,7 +97,7 @@ der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 ## Einstellungen
 
 Standard: maximal **960×540**, **3 Bounces**, **4 Samples pro Frame**, **8×8**
-Workgroup und **RGBA32F**. Mehr Bounces und Schattenstrahlen kosten GPU-Zeit;
+Workgroup, **RGBA32F** und **À-Trous**. Mehr Bounces und Schattenstrahlen kosten GPU-Zeit;
 Frameraten müssen auf der Zielhardware gemessen werden.
 
 ```sh
@@ -64,8 +105,14 @@ Frameraten müssen auf der Zielhardware gemessen werden.
 mvn compile exec:java -Dpt.bounces=1 -Dpt.samplesPerFrame=2
 # Höhere Qualität
 mvn compile exec:java -Dpt.width=1920 -Dpt.height=1080 -Dpt.samplesPerFrame=8 -Dpt.bounces=4
-# Ohne Denoiser als Vergleich
+# Denoiser direkt auswählen (zusätzlich im Pausenmenü umschaltbar)
+mvn compile exec:java -Dpt.denoiser=atrous
+mvn compile exec:java -Dpt.denoiser=own
+mvn compile exec:java -Dpt.denoiser=off
+# Legacy-Schalter bleibt erhalten
 mvn compile exec:java -Dpt.noDenoise=true
+# Filterstärke und Belichtung
+mvn compile exec:java -Dpt.denoiseStrength=1.25 -Dpt.exposure=1.25
 # Diagnose ohne Pathtracing-Farbwerte
 mvn compile exec:java -Dpt.gradient=true
 # Langsamer Referenzpfad ohne BVH
@@ -80,7 +127,7 @@ mvn compile exec:java -Dpt.smokeFrames=8
 
 Gültig sind 1–8 Bounces, 1–16 Samples/Frame und Workgroups 8×8, 16×8 oder 16×16.
 RGBA16F kann bei vielen Samples durch Quantisierung stagnieren; RGBA32F bleibt Standard.
-Der Denoiser ist räumlich, ohne Motion Vectors oder zeitliche Reprojektion. Beim
+Beide Denoiser sind räumlich, ohne Motion Vectors oder zeitliche Reprojektion. Beim
 Bewegen der Kamera beginnt die progressive Mittelung erneut. Glas/Transmission,
 Bildtexturimport, OBJ/glTF-Import und mehrere gesampelte Flächenlichter sind nicht enthalten.
 
@@ -113,6 +160,9 @@ synchronisiert. Nach Reset wird kein undefinierter Akkumulationsinhalt gelesen.
 
 - `BVHTest`: Blattabdeckung, Bounds, Tiefe, degenerierte Geometrie, leere Szene
   und 6000 deterministische BVH-/Brute-Force-Strahlvergleiche.
+- `MenuSettingsTest`: Menüaktionen, Denoiser-Auswahl, Reglergrenzen, Tastaturfokus,
+  HiDPI-/Fensterformat-Transformation, Settings-Roundtrip, beschädigte Einstellungen
+  und begehbare Raumgrenzen.
 - `SceneRegressionTest`: übergebenes Brett, Zugfolge, ungültige Züge, Sieg/Neustart,
   geschlossene und korrekt orientierte Bevel-Geometrie, Indizes sowie identische
   Fläche von Lichtgeometrie und Lichtsampler.
@@ -120,14 +170,20 @@ synchronisiert. Nach Reset wird kein undefinierter Akkumulationsinhalt gelesen.
 Der Linux/EGL-Test prüft tatsächliche Shaderkompilierung und LWJGL-Uploads,
 Accumulation, Reset, Resize, Szenenwechsel, Pausen-Rendering, endliche/nichtleere
 Ausgabe, pixelweisen BVH-/Brute-Force-Vergleich sowie alle sechs
-Format-/Workgroup-Kombinationen:
+Format-/Workgroup-Kombinationen. Außerdem werden Denoiserwechsel ohne Sampleverlust,
+Live-Belichtung, Sampling-Reset, Auflösungswechsel und Einfrieren der Pause geprüft.
+`AtrousDenoiserTest` prüft auf der GPU ein deterministisch verrauschtes Bild und
+fordert mindestens 50 % weniger mittleren quadratischen Fehler bei erhaltener
+Materialkante (65×33 prüft auch unvollständige Workgroups):
 
 ```sh
 EGL_PLATFORM=surfaceless mvn test-compile exec:java -Dlwjgl.natives=natives-linux -Dexec.mainClass=de.viergewinnt.renderer.RendererSmokeTest -Dexec.classpathScope=test
 ```
 
 Diese Überarbeitung wurde mit ECJ unter Java 17 gegen LWJGL 3.4.3 kompiliert und
-auf Mesa/llvmpipe über EGL geprüft; außerdem wurde ein 640×360-Rendering mit
-192 Samples pro Pixel visuell kontrolliert. Der konfigurierte Maven-/JDK-25-Build,
+auf Mesa/llvmpipe über EGL geprüft. Die À-Trous-Integration reduzierte im genannten
+synthetischen Test den Rausch-MSE um 99,6 %; das ist kein Qualitätsversprechen für
+beliebige Spielszenen. Raum, Pausenmenü und Grafikseite wurden als tatsächliche
+OpenGL-Ausgaben visuell kontrolliert (1280×720, intern 640×360, 100 spp). Der konfigurierte Maven-/JDK-25-Build,
 interaktive Eingabe, Windows-/HiDPI-Verhalten und Leistung auf echten GPUs müssen
 zusätzlich auf der Zielplattform geprüft werden.

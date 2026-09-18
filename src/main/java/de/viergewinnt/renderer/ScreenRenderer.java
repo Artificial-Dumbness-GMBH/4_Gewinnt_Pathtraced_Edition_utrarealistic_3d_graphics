@@ -20,10 +20,10 @@ import static org.lwjgl.opengl.GL30.glGenVertexArrays;
 public final class ScreenRenderer implements AutoCloseable {
     private final ShaderProgram shader=new ShaderProgram(new String[]{"/shaders/fullscreen.vert","/shaders/tonemap.frag"},new int[]{GL_VERTEX_SHADER,GL_FRAGMENT_SHADER},"");
     private final int vao=glGenVertexArrays();
-    public void render(int texture,int normalDepth,int albedoGuide,int width,int height,boolean paused,int samples) {
+    public void render(int texture,int normalDepth,int albedoGuide,int width,int height,boolean paused,int samples,RenderSettings settings) {
         glViewport(0,0,width,height);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_FRAMEBUFFER_SRGB);
-        shader.use();shader.integer("sampleCount",samples);shader.integer("denoise",Boolean.getBoolean("pt.noDenoise")?0:1);
-        shader.scalar("aspect",(float)width/height);
+        shader.use();shader.integer("sampleCount",samples);shader.integer("denoise",settings.denoiser()==RenderSettings.Denoiser.OWN?1:0);
+        shader.scalar("denoiseStrength",settings.denoiseStrength());shader.scalar("exposure",settings.exposure());
         shader.integer("normalDepth",1);shader.integer("albedoGuide",2);
         glActiveTexture(GL_TEXTURE0+1);glBindTexture(GL_TEXTURE_2D,normalDepth);
         glActiveTexture(GL_TEXTURE0+2);glBindTexture(GL_TEXTURE_2D,albedoGuide);

@@ -42,6 +42,28 @@ public class RendererSmokeTest {
     }
    }
    glActiveTexture(GL_TEXTURE0);
+   RenderSettings original=pt.settings();int accumulated=pt.samples();
+   for(RenderSettings.Denoiser mode:RenderSettings.Denoiser.values()) {
+    pt.applySettings(original.withDenoiser(mode));pt.renderPauseOverlay(80,50);
+    if(pt.samples()!=accumulated) throw new AssertionError("denoiser switch reset raw accumulation");
+    glFinish();if(glGetError()!=GL_NO_ERROR) throw new AssertionError("denoiser switch GL error");
+   }
+   pt.applySettings(original.withExposure(.5f));pt.renderPauseOverlay(80,50);
+   float[] dark=new float[80*50*4];glReadPixels(0,0,80,50,GL_RGBA,GL_FLOAT,dark);
+   pt.applySettings(original.withExposure(2));pt.renderPauseOverlay(80,50);
+   float[] bright=new float[dark.length];glReadPixels(0,0,80,50,GL_RGBA,GL_FLOAT,bright);
+   double gain=0;for(int i=0;i<bright.length;i+=4) gain+=bright[i]-dark[i];
+   if(gain<10||pt.samples()!=accumulated) throw new AssertionError("live exposure");
+   pt.applySettings(original.withBounces(original.bounces()==8?7:original.bounces()+1));
+   if(pt.samples()!=0) throw new AssertionError("bounce change must reset");
+   pt.render(c,80,50);
+   pt.applySettings(original.withSamples(8));if(pt.samples()!=0) throw new AssertionError("sample setting must reset");
+   pt.render(c,80,50);if(pt.samples()!=8) throw new AssertionError("live sample count");
+   pt.applySettings(original.withResolution(64,64));pt.render(c,96,54);
+   if(glGetTexLevelParameteri(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH)!=64) throw new AssertionError("live resolution");
+   for(int i=0;i<64;i++) pt.renderPaused(c,96,54);
+   int settled=pt.samples();pt.renderPaused(c,96,54);
+   if(settled<64||pt.samples()!=settled) throw new AssertionError("pause did not settle/freeze");
    System.out.println("GPU smoke passed: "+glGetString(GL_RENDERER)+", output range "+min+".."+max);
   }
   float[][] reference=new float[2][];
@@ -68,6 +90,7 @@ public class RendererSmokeTest {
    }
   }
   System.out.println("Six format/workgroup variants passed");
+  AtrousDenoiserTest.run();
   glfwDestroyWindow(window);glfwTerminate();
  }
 }

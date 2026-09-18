@@ -23,6 +23,11 @@ public final class Camera {
     public void resetMouseCursor(double centerX,double centerY) {
         lastX=centerX;lastY=centerY;mouseInitialized=true;
     }
+    /** Keep movement inside the room and outside the central table footprint. */
+    public static boolean isWalkable(float x,float z) {
+        return Math.abs(x)<Scene.ROOM_HALF_WIDTH-.7f&&Math.abs(z)<Scene.ROOM_HALF_DEPTH-.7f
+            &&!(Math.abs(x)<6.5f&&Math.abs(z)<3.7f);
+    }
     /** Mouse look is active whenever the cursor is captured; no right-click is required. */
     public boolean update(long window,float dt) {
         boolean changed=false;
@@ -39,7 +44,12 @@ public final class Camera {
         if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS) move=move.sub(horizontalForward);
         if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS) move=move.add(horizontalRight);
         if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS) move=move.sub(horizontalRight);
-        if(move.dot(move)>0) { position=position.add(move.normalized().mul(5*Math.min(dt,.1f)));changed=true; }
+        if(move.dot(move)>0) {
+            Vec3 step=move.normalized().mul(5*Math.min(dt,.1f)),next=position;
+            if(isWalkable(next.x+step.x,next.z)) next=new Vec3(next.x+step.x,next.y,next.z);
+            if(isWalkable(next.x,next.z+step.z)) next=new Vec3(next.x,next.y,next.z+step.z);
+            changed|=next.x!=position.x||next.z!=position.z;position=next;
+        }
         return changed;
     }
 }
