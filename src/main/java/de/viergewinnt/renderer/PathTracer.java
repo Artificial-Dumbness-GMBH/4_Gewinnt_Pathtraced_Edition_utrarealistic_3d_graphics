@@ -51,7 +51,7 @@ public final class PathTracer implements AutoCloseable {
         if(groupX==8&&groupY==16) throw new IllegalArgumentException("Use 8x8, 16x8 or 16x16");
 
         half=Boolean.getBoolean("pt.half");bruteForce=Boolean.getBoolean("pt.bruteForce");
-        shader=new ComputeShader(groupX,groupY,half);
+        shader=ComputeShader.create(groupX,groupY,half);
         ScreenRenderer createdScreen=null;AtrousDenoiser createdAtrous=null;TemporalAA createdTemporal=null;
         try { createdScreen=new ScreenRenderer();createdAtrous=new AtrousDenoiser();createdTemporal=new TemporalAA();scene=new GPUScene(initialScene); }
         catch(RuntimeException e) { if(createdTemporal!=null) createdTemporal.close();if(createdAtrous!=null) createdAtrous.close();if(createdScreen!=null) createdScreen.close();shader.close();throw e; }
@@ -78,6 +78,8 @@ public final class PathTracer implements AutoCloseable {
         }
         settings=next;
     }
+    public boolean usesFp16Arithmetic() { return shader.precision.fp16(); }
+    public String precisionDescription() { return shader.precision.description()+"; accumulation "+(half?"FP16 (experimental)":"FP32"); }
     public int samples() { return frameIndex*settings.samplesPerFrame(); }
     public void render(Camera camera,int framebufferWidth,int framebufferHeight) {
         if(framebufferWidth<=0||framebufferHeight<=0) return;

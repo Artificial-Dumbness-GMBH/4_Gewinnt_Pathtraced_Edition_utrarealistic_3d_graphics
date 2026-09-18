@@ -95,6 +95,7 @@ public class RendererSmokeTest {
   }
   System.out.println("Six format/workgroup variants passed");
   System.clearProperty("pt.half");
+  PrecisionRenderTest.run();
   DropRenderTest.run();
   TemporalAATest.run();
   AtrousDenoiserTest.run();

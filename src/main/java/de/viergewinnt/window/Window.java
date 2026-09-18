@@ -107,6 +107,7 @@ public class Window {
             int frames=0,totalFrames=0,smokeFrames=Integer.getInteger("pt.smokeFrames",0);
             boolean paused=false,escapeHeld=false,mouseHeld=false;
             try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()),settings);MenuRenderer menuRenderer=new MenuRenderer();HologramRenderer hologram=new HologramRenderer()) {
+                System.out.println("Shader precision: "+tracer.precisionDescription());
                 while(!glfwWindowShouldClose(window)) {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
                     glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);

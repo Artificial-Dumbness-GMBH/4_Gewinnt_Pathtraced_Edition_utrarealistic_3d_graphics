@@ -32,6 +32,34 @@ Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
 wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
 der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
+## Automatische Shader-Präzision: AMD FP16 / FP32
+
+Standard ist `-Dpt.precision=auto`: AMD-Geräte nutzen einen Mixed-FP16/FP32-Pfad,
+sofern der aktive OpenGL-Treiber eine passende Shader-Erweiterung meldet.
+Andere Hersteller bleiben automatisch bei FP32. Eine fehlende Erweiterung oder ein
+Fehler beim Übersetzen/Linken des optionalen FP16-Shaders führt zurück zu FP32.
+Der tatsächlich verwendete Pfad und das Akkumulationsformat werden beim Start ausgegeben.
+
+```sh
+# Automatisch: AMD + Erweiterung → Mixed FP16, sonst FP32
+mvn compile exec:java -Dpt.precision=auto
+# FP32 als Vergleich oder Kompatibilitätsmodus
+mvn compile exec:java -Dpt.precision=fp32
+# FP16 auch auf anderen Herstellern versuchen; sicherer FP32-Fallback
+mvn compile exec:java -Dpt.precision=fp16
+```
+
+Explizite `f16vec4`-Farbrechnung und auf dem AMD-Erweiterungspfad Half-FMA ermöglichen
+Packed-FP16-Operationen in der Materialauswertung. Schnittpunkte, BVH, GGX-Verteilung,
+PDFs, Lichtgewichte, TAA und die standardmäßige HDR-Akkumulation bleiben FP32.
+Das bisherige `-Dpt.half=true` betrifft ausschließlich den experimentellen
+Akkumulationsspeicher und ist davon unabhängig.
+
+**Packed FP16 ist keine Garantie für Dual-Issue oder doppelte Spiel-FPS.**
+Die tatsächlich erzeugten Instruktionen und Laufzeiten hängen von GPU und Compiler ab.
+Der native AMD-Pfad ist in der verfügbaren Testumgebung noch nicht hardwarevalidiert.
+[Details, Quellen und Tests](docs/shader-precision.md).
+
 ## TAA-Kantenglättung
 
 Unter **ESC → Grafik → Kantenglättung** lässt sich TAA sofort ein- und ausschalten.

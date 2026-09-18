@@ -20,8 +20,9 @@ public final class RendererBenchmark {
         if(window==0) throw new AssertionError("EGL");glfwMakeContextCurrent(window);GL.createCapabilities();
         Board board=new Board();int[] moves={3,2,3,4,2,4,1,5,3,2,4,5,0,6};
         for(int i=0;i<moves.length;i++) board.dropPiece(moves[i],i%2==0?Player.Red:Player.Blue);
-        RenderSettings settings=RenderSettings.defaults().withDenoiser(RenderSettings.Denoiser.OFF).withResolution(w,h).withSamples(2);
+        RenderSettings settings=RenderSettings.defaults().withDenoiser(RenderSettings.Denoiser.OFF).withTaa(false).withResolution(w,h).withSamples(2);
         try(PathTracer tracer=new PathTracer(Scene.fromBoard(board),settings)) {
+            System.out.println("Shader precision: "+tracer.precisionDescription());
             Camera camera=new Camera();for(int i=0;i<4;i++) tracer.render(camera,w,h);glFinish();
             double[] times=new double[5];
             for(int batch=0;batch<times.length;batch++) {
