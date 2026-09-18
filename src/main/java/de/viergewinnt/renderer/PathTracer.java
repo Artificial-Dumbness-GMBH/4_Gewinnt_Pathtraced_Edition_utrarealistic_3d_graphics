@@ -71,7 +71,10 @@ public final class PathTracer implements AutoCloseable {
         glBindImageTexture(0,texture,0,false,0,GL_READ_WRITE,half?GL_RGBA16F:GL_RGBA32F);
         glDispatchCompute((width+groupX-1)/groupX,(height+groupY-1)/groupY,1);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT|GL_TEXTURE_FETCH_BARRIER_BIT);
-        screen.render(texture,framebufferWidth,framebufferHeight);frameIndex++;
+        screen.render(texture,framebufferWidth,framebufferHeight,false);frameIndex++;
+    }
+    public void renderPauseOverlay(int framebufferWidth,int framebufferHeight) {
+        if(texture!=0) screen.render(texture,framebufferWidth,framebufferHeight,true);
     }
     @Override public void close() { if(texture!=0) glDeleteTextures(texture);scene.close();screen.close();shader.close(); }
 }

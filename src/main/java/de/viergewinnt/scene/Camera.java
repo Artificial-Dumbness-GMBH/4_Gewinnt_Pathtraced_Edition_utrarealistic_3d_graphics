@@ -30,12 +30,14 @@ public final class Camera {
             yaw+=(float)(x[0]-lastX)*.12f;pitch=Math.max(-89,Math.min(89,pitch-(float)(y[0]-lastY)*.12f));changed=true;
         }
         lastX=x[0];lastY=y[0];
+        Vec3 horizontalForward=new Vec3(forward().x,0,forward().z).normalized();
+        Vec3 horizontalRight=new Vec3(-horizontalForward.z,0,horizontalForward.x);
         Vec3 move=new Vec3(0,0,0);
-        if(glfwGetKey(window,GLFW_KEY_W)==GLFW_PRESS) move=move.add(forward());
-        if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS) move=move.sub(forward());
-        if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS) move=move.add(right());
-        if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS) move=move.sub(right());
-        if(move.dot(move)>0) { position=position.add(move.normalized().mul(5*Math.min(dt,.1f)));changed=true; }
+        if(glfwGetKey(window,GLFW_KEY_W)==GLFW_PRESS) move=move.add(horizontalForward);
+        if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS) move=move.sub(horizontalForward);
+        if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS) move=move.add(horizontalRight);
+        if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS) move=move.sub(horizontalRight);
+        if(move.dot(move)>0) { position=position.add(move.normalized().mul(5*Math.min(dt,.1f)));position=new Vec3(position.x,3,position.z);changed=true; }
         return changed;
     }
 }
