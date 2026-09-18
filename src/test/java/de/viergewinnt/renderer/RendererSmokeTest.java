@@ -63,6 +63,15 @@ public class RendererSmokeTest {
    pt.render(c,80,50);
    pt.applySettings(original.withSamples(8));if(pt.samples()!=0) throw new AssertionError("sample setting must reset");
    pt.render(c,80,50);if(pt.samples()!=8) throw new AssertionError("live sample count");
+   for(int[] low:new int[][]{{213,120},{124,70}}) {
+    pt.applySettings(original.withResolution(low[0],low[1]));pt.render(c,1280,720);
+    if(glGetTexLevelParameteri(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH)!=low[0]
+        ||glGetTexLevelParameteri(GL_TEXTURE_2D,0,GL_TEXTURE_HEIGHT)!=low[1]) throw new AssertionError("low resolution dimensions");
+    float[] lowPixels=new float[low[0]*low[1]*4];glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,lowPixels);
+    for(float v:lowPixels) if(!Float.isFinite(v)) throw new AssertionError("nonfinite low resolution pixel");
+    if(pt.samples()!=original.samplesPerFrame()||glGetError()!=GL_NO_ERROR) throw new AssertionError("low resolution reset/GL error");
+   }
+   System.out.println("120p/70p GPU resize checks passed, including TAA and denoising.");
    pt.applySettings(original.withResolution(64,64));pt.render(c,96,54);
    if(glGetTexLevelParameteri(GL_TEXTURE_2D,0,GL_TEXTURE_WIDTH)!=64) throw new AssertionError("live resolution");
    for(int i=0;i<64;i++) pt.renderPaused(c,96,54);

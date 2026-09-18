@@ -123,6 +123,13 @@ nicht reduziert; ein Upscaler wurde nicht hinzugefügt. Im lokalen festen
 Messaufbau, Grenzen und Testbefehl stehen im
 [Validierungsbericht](docs/hologram-performance.md).
 
+## Sehr niedrige Render-Auflösungen
+
+Unter **ESC → Grafik → Render-Auflösung** sind jetzt auch **213 × 120 (120p)** und
+**124 × 70 (70p)** verfügbar. Über Minus geht es von 360p auf 120p und anschließend
+70p; Plus erhöht die Auflösung wieder. Die Auswahl wird gespeichert. Fensterformat
+und Menüauflösung bleiben erhalten, die 3D-Szene wird entsprechend gröber gerendert.
+
 ## Pausenmenü und Einstellungen
 
 Escape öffnet das neue Pausenmenü. Unter **Grafik** lassen sich Einstellungen

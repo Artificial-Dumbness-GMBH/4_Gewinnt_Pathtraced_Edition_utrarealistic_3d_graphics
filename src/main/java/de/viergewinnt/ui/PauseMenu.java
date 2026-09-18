@@ -14,7 +14,7 @@ public final class PauseMenu {
     public record Control(String id,String label,int x,int y,int width,int height,boolean enabled) {
         boolean contains(double px,double py) { return px>=x&&px<x+width&&py>=y&&py<y+height; }
     }
-    private static final int[][] RESOLUTIONS={{640,360},{960,540},{1280,720},{1920,1080},{3840,2160}};
+    private static final int[][] RESOLUTIONS={{124,70},{213,120},{640,360},{960,540},{1280,720},{1920,1080},{3840,2160}};
     private static final int[] SAMPLES={1,2,4,8,16};
     private RenderSettings settings;
     private boolean graphics,dirty=true;
@@ -50,7 +50,7 @@ public final class PauseMenu {
                 settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
             pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<8);
             pair(c,"samples",398,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
-            pair(c,"resolution",454,settings.maxWidth()>640,settings.maxWidth()<3840);
+            pair(c,"resolution",454,settings.maxWidth()>RESOLUTIONS[0][0],settings.maxWidth()<RESOLUTIONS[RESOLUTIONS.length-1][0]);
             pair(c,"exposure",510,settings.exposure()>.25f,settings.exposure()<3);
             c.add(new Control("defaults","Standardwerte",276,590,200,42,true));
             c.add(new Control("resume","Weiterspielen",716,590,200,42,true));
@@ -88,7 +88,7 @@ public final class PauseMenu {
         else if(id.startsWith("bounces")) settings=settings.withBounces(Math.max(1,Math.min(8,settings.bounces()+sign)));
         else if(id.startsWith("samples")) settings=settings.withSamples(nextValue(SAMPLES,settings.samplesPerFrame(),sign));
         else if(id.startsWith("resolution")) {
-            int[] widths={640,960,1280,1920,3840};int width=nextValue(widths,settings.maxWidth(),sign);
+            int[] widths=java.util.Arrays.stream(RESOLUTIONS).mapToInt(r->r[0]).toArray();int width=nextValue(widths,settings.maxWidth(),sign);
             for(int[] r:RESOLUTIONS) if(r[0]==width) settings=settings.withResolution(r[0],r[1]);
         } else if(id.startsWith("exposure")) settings=settings.withExposure(clamp(settings.exposure()+sign*.25f,.25f,3));
         else if(id.equals("defaults")) settings=RenderSettings.defaults();

@@ -28,6 +28,12 @@ public final class MenuSettingsTest {
         check(defaults.sameSampling(defaults.withExposure(2).withDenoiser(RenderSettings.Denoiser.OWN)),"display changes discard samples");
         check(!defaults.sameSampling(defaults.withSamples(8)),"sampling changes not detected");
         check(click(menu,"defaults")==PauseMenu.Action.SETTINGS&&menu.settings().equals(defaults),"defaults");
+        click(menu,"resolution-");check(menu.settings().maxHeight()==360,"360p step");
+        click(menu,"resolution-");check(menu.settings().maxWidth()==213&&menu.settings().maxHeight()==120,"120p step");
+        click(menu,"resolution-");check(menu.settings().maxWidth()==124&&menu.settings().maxHeight()==70,"70p step");
+        check(click(menu,"resolution-")==PauseMenu.Action.NONE&&menu.settings().maxHeight()==70,"minimum resolution");
+        click(menu,"resolution+");check(menu.settings().maxHeight()==120,"leave minimum resolution");
+        click(menu,"defaults");
         // The exact same panel transform is used at 1x, HiDPI, portrait and ultrawide.
         for(int[] dims:new int[][]{{1280,720,1280,720},{1280,720,2560,1440},{600,900,1200,1800},{2560,1080,2560,1080}}) {
             for(var c:menu.controls()) {
@@ -49,6 +55,11 @@ public final class MenuSettingsTest {
         try {
             RenderSettings custom=defaults.withDenoiser(RenderSettings.Denoiser.OWN).withBounces(6).withSamples(8).withExposure(1.5f).withTaa(false);
             SettingsStore.save(file,custom);check(SettingsStore.load(file).equals(custom),"settings round trip");
+            for(int[] resolution:new int[][]{{124,70},{213,120}}) {
+                RenderSettings low=custom.withResolution(resolution[0],resolution[1]);SettingsStore.save(file,low);
+                check(SettingsStore.load(file).equals(low),"low resolution persistence");
+            }
+            SettingsStore.save(file,custom);
             String saved=Files.readString(file);Files.writeString(file,saved.replace("taa=false\n",""));
             check(SettingsStore.load(file).equals(custom.withTaa(true)),"legacy settings migration");
             Files.writeString(file,"bounces=garbage\n");check(SettingsStore.load(file).equals(defaults),"corrupt settings recovery");
