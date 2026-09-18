@@ -18,7 +18,8 @@ public final class SettingsStore {
             return new RenderSettings(RenderSettings.Denoiser.valueOf(p.getProperty("denoiser")),
                 Integer.parseInt(p.getProperty("bounces")),Integer.parseInt(p.getProperty("samples")),
                 Integer.parseInt(p.getProperty("width")),Integer.parseInt(p.getProperty("height")),
-                Float.parseFloat(p.getProperty("strength")),Float.parseFloat(p.getProperty("exposure")));
+                Float.parseFloat(p.getProperty("strength")),Float.parseFloat(p.getProperty("exposure")),
+                Boolean.parseBoolean(p.getProperty("taa","true")));
         } catch(IOException|IllegalArgumentException|NullPointerException e) {
             System.err.println("Grafikeinstellungen konnten nicht geladen werden; verwende Standardwerte: "+e.getMessage());
             return RenderSettings.defaults();
@@ -29,7 +30,7 @@ public final class SettingsStore {
         Properties p=new Properties();p.setProperty("denoiser",s.denoiser().name());p.setProperty("bounces",Integer.toString(s.bounces()));
         p.setProperty("samples",Integer.toString(s.samplesPerFrame()));p.setProperty("width",Integer.toString(s.maxWidth()));
         p.setProperty("height",Integer.toString(s.maxHeight()));p.setProperty("strength",Float.toString(s.denoiseStrength()));
-        p.setProperty("exposure",Float.toString(s.exposure()));
+        p.setProperty("exposure",Float.toString(s.exposure()));p.setProperty("taa",Boolean.toString(s.taa()));
         Path temp=Files.createTempFile(path.getParent(),"render-",".tmp");
         try {
             try(OutputStream out=Files.newOutputStream(temp)) { p.store(out,"4 Gewinnt graphics settings"); }

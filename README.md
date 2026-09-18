@@ -32,6 +32,27 @@ Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
 wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
 der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
+## TAA-Kantenglättung
+
+Unter **ESC → Grafik → Kantenglättung** lässt sich TAA sofort ein- und ausschalten.
+TAA ist standardmäßig aktiv und wird mit den anderen Einstellungen gespeichert.
+`-Dpt.taa=false` deaktiviert es beim Start. Ältere Einstellungsdateien bleiben gültig.
+
+Die temporale Glättung kombiniert wechselnde Subpixel-Samples mit zurückprojizierten
+Bilddaten. Tiefe, Normalen und Material prüfen, ob alte Daten zur aktuellen Oberfläche
+passen; ein Abgleich mit der aktuellen Pixel-Nachbarschaft begrenzt Nachziehspuren.
+Bei fallenden Steinen, Szenenwechseln und Auflösungsänderungen wird der Verlauf
+verworfen. Der Zufallssample-Zähler läuft bei Kamerabewegungen weiter.
+
+TAA arbeitet in der eingestellten Render-Auflösung und fügt keinen Upscaler hinzu.
+Die progressive Pathtracing-Akkumulation bleibt erhalten. Menü und Hologramm werden
+anschließend gezeichnet und dadurch nicht temporal verwischt. Bei bewegten Coins
+wird zugunsten sauberer Konturen konservativ auf den bisherigen Verlauf verzichtet.
+
+![TAA im Grafikmenü](docs/taa-settings.jpg)
+
+[Implementierung und GPU-Validierung](docs/taa-validation.md)
+
 ## Fallende Spielsteine und echte Öffnungen
 
 Die Tasten 1–7 lassen einen Stein von oben in den gewählten Schacht fallen.

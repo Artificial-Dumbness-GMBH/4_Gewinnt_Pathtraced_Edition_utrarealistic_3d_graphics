@@ -16,6 +16,9 @@ public final class MenuSettingsTest {
         for(RenderSettings.Denoiser mode:new RenderSettings.Denoiser[]{RenderSettings.Denoiser.OFF,RenderSettings.Denoiser.OWN,RenderSettings.Denoiser.ATROUS}) {
             check(click(menu,"denoiser")==PauseMenu.Action.SETTINGS&&menu.settings().denoiser()==mode,"denoiser cycle");
         }
+        check(click(menu,"taa")==PauseMenu.Action.SETTINGS&&!menu.settings().taa(),"TAA off");
+        check(click(menu,"taa")==PauseMenu.Action.SETTINGS&&menu.settings().taa(),"TAA on");
+        check(defaults.sameSampling(defaults.withTaa(false)),"TAA discarded raw samples");
         for(int i=0;i<20;i++) click(menu,"bounces+");check(menu.settings().bounces()==8,"bounce upper bound");
         for(int i=0;i<20;i++) click(menu,"bounces-");check(menu.settings().bounces()==1,"bounce lower bound");
         click(menu,"samples+");check(menu.settings().samplesPerFrame()==8,"sample step");
@@ -44,8 +47,10 @@ public final class MenuSettingsTest {
         check(Camera.isWalkable(10,10)&&!Camera.isWalkable(0,0)&&!Camera.isWalkable(22,0)&&!Camera.isWalkable(0,26),"room/table collisions");
         Files.createDirectories(Path.of("target"));Path directory=Files.createTempDirectory(Path.of("target"),"settings-test-");Path file=directory.resolve("render.properties");
         try {
-            RenderSettings custom=defaults.withDenoiser(RenderSettings.Denoiser.OWN).withBounces(6).withSamples(8).withExposure(1.5f);
+            RenderSettings custom=defaults.withDenoiser(RenderSettings.Denoiser.OWN).withBounces(6).withSamples(8).withExposure(1.5f).withTaa(false);
             SettingsStore.save(file,custom);check(SettingsStore.load(file).equals(custom),"settings round trip");
+            String saved=Files.readString(file);Files.writeString(file,saved.replace("taa=false\n",""));
+            check(SettingsStore.load(file).equals(custom.withTaa(true)),"legacy settings migration");
             Files.writeString(file,"bounces=garbage\n");check(SettingsStore.load(file).equals(defaults),"corrupt settings recovery");
             check(SettingsStore.load(directory.resolve("absent")).equals(defaults),"first run");
         } finally { Files.deleteIfExists(file);Files.deleteIfExists(directory); }

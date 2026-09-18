@@ -45,12 +45,13 @@ public final class PauseMenu {
             c.add(new Control("quit","Spiel beenden",276,382,640,58,true));
         } else {
             c.add(new Control("denoiser",denoiserLabel(),580,174,336,44,true));
-            pair(c,"strength",238,settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
+            c.add(new Control("taa",settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,true));
+            pair(c,"strength",286,settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
                 settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
-            pair(c,"bounces",302,settings.bounces()>1,settings.bounces()<8);
-            pair(c,"samples",366,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
-            pair(c,"resolution",430,settings.maxWidth()>640,settings.maxWidth()<3840);
-            pair(c,"exposure",494,settings.exposure()>.25f,settings.exposure()<3);
+            pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<8);
+            pair(c,"samples",398,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
+            pair(c,"resolution",454,settings.maxWidth()>640,settings.maxWidth()<3840);
+            pair(c,"exposure",510,settings.exposure()>.25f,settings.exposure()<3);
             c.add(new Control("defaults","Standardwerte",276,590,200,42,true));
             c.add(new Control("resume","Weiterspielen",716,590,200,42,true));
         }
@@ -82,6 +83,7 @@ public final class PauseMenu {
         RenderSettings before=settings;
         int sign=id.endsWith("-")?-1:1;
         if(id.equals("denoiser")) settings=settings.withDenoiser(RenderSettings.Denoiser.values()[(settings.denoiser().ordinal()+1)%3]);
+        else if(id.equals("taa")) settings=settings.withTaa(!settings.taa());
         else if(id.startsWith("strength")) settings=settings.withStrength(clamp(settings.denoiseStrength()+sign*.25f,.25f,2));
         else if(id.startsWith("bounces")) settings=settings.withBounces(Math.max(1,Math.min(8,settings.bounces()+sign)));
         else if(id.startsWith("samples")) settings=settings.withSamples(nextValue(SAMPLES,settings.samplesPerFrame(),sign));
@@ -126,16 +128,16 @@ public final class PauseMenu {
         text(g,graphics?"Dein Bild. Deine Balance aus Qualität und Tempo.":"Nimm dir Zeit. Dein Spiel bleibt erhalten.",276,111,17,MUTED,false);
         rounded(g,276,137,640,2,0,new Color(51,65,80));
         if(graphics) {
-            String[] labels={"Denoiser","Filterstärke","Path-Bounces","Samples / Frame","Render-Auflösung","Belichtung"};
-            String[] descriptions={"Klicken, um den Filter zu wechseln","Mehr Glättung oder mehr Details","Maximale Lichtpfadlänge","Mehr Samples reduzieren das Rauschen","Obergrenze · Fensterformat bleibt erhalten","Helligkeit nach dem Pathtracing"};
-            for(int i=0;i<6;i++) {
-                int y=174+i*64;
+            String[] labels={"Denoiser","Kantenglättung","Filterstärke","Path-Bounces","Samples / Frame","Render-Auflösung","Belichtung"};
+            String[] descriptions={"Klicken, um den Filter zu wechseln","Temporale Glättung · kein Upscaler","Mehr Glättung oder mehr Details","Maximale Lichtpfadlänge","Mehr Samples reduzieren das Rauschen","Obergrenze · Fensterformat bleibt erhalten","Helligkeit nach dem Pathtracing"};
+            for(int i=0;i<7;i++) {
+                int y=174+i*56;
                 text(g,labels[i],276,y+18,17,TEXT,true);text(g,descriptions[i],276,y+40,12,MUTED,false);
             }
             String[] values={String.format(Locale.ROOT,"%.0f %%",settings.denoiseStrength()*100),Integer.toString(settings.bounces()),
                 Integer.toString(settings.samplesPerFrame()),settings.maxWidth()+" × "+settings.maxHeight(),String.format(Locale.ROOT,"%.2f×",settings.exposure())};
             for(int i=0;i<5;i++) {
-                int y=238+i*64;rounded(g,710,y,154,44,12,new Color(17,27,39));
+                int y=286+i*56;rounded(g,710,y,154,44,12,new Color(17,27,39));
                 g.setFont(new Font(Font.SANS_SERIF,Font.BOLD,17));int tw=g.getFontMetrics().stringWidth(values[i]);
                 text(g,values[i],787-tw/2,y+28,17,TEXT,true);
             }

@@ -7,7 +7,7 @@ import org.lwjgl.opengl.*;
 import static org.lwjgl.glfw.GLFW.*;
 import static org.lwjgl.opengl.GL43.*;
 public class RendererSmokeTest {
- public static void main(String[] args) {
+ public static void main(String[] args) throws Exception {
   GLFWErrorCallback.createPrint(System.err).set();
   glfwInitHint(GLFW_PLATFORM,GLFW_PLATFORM_NULL);
   if(!glfwInit()) throw new AssertionError("init");
@@ -48,6 +48,10 @@ public class RendererSmokeTest {
     if(pt.samples()!=accumulated) throw new AssertionError("denoiser switch reset raw accumulation");
     glFinish();if(glGetError()!=GL_NO_ERROR) throw new AssertionError("denoiser switch GL error");
    }
+   pt.applySettings(original.withTaa(false));pt.renderPauseOverlay(80,50);
+   if(pt.samples()!=accumulated) throw new AssertionError("TAA toggle discarded raw samples");
+   pt.applySettings(original.withTaa(true));pt.renderPauseOverlay(80,50);
+   if(pt.samples()!=accumulated) throw new AssertionError("TAA enable discarded raw samples");
    pt.applySettings(original.withExposure(.5f));pt.renderPauseOverlay(80,50);
    float[] dark=new float[80*50*4];glReadPixels(0,0,80,50,GL_RGBA,GL_FLOAT,dark);
    pt.applySettings(original.withExposure(2));pt.renderPauseOverlay(80,50);
@@ -92,6 +96,7 @@ public class RendererSmokeTest {
   System.out.println("Six format/workgroup variants passed");
   System.clearProperty("pt.half");
   DropRenderTest.run();
+  TemporalAATest.run();
   AtrousDenoiserTest.run();
   de.viergewinnt.hud.HologramSmokeTest.run();
   glfwDestroyWindow(window);glfwTerminate();

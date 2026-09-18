@@ -1,0 +1,58 @@
+#version 430 core
+layout(local_size_x=8,local_size_y=8) in;
+layout(rgba32f,binding=0) writeonly uniform image2D outputColor;
+layout(rgba32f,binding=1) writeonly uniform image2D outputGuide;
+uniform sampler2D currentColor,currentGuide,currentAlbedo,historyColor,historyGuide;
+uniform int historyValid;
+uniform float historyWeight;
+uniform vec3 cameraPosition,cameraForward,cameraRight,cameraUp;
+uniform vec3 previousPosition,previousForward,previousRight,previousUp;
+const float TAN_HALF_FOV=.57735026919;
+vec3 ray(vec2 pixel,ivec2 size,vec3 forward,vec3 right,vec3 up) {
+    vec2 p=pixel/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
+    return normalize(forward+TAN_HALF_FOV*(p.x*right+p.y*up));
+}
+void main() {
+    ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(outputColor);
+    if(any(greaterThanEqual(pixel,size))) return;
+    vec3 current=texelFetch(currentColor,pixel,0).rgb;
+    vec4 guide=texelFetch(currentGuide,pixel,0);
+    float material=texelFetch(currentAlbedo,pixel,0).a;
+    vec3 result=current;
+    if(historyValid!=0&&guide.w>0) {
+        vec3 world=cameraPosition+guide.w*ray(vec2(pixel)+.5,size,cameraForward,cameraRight,cameraUp);
+        vec3 relative=world-previousPosition;
+        float z=dot(relative,previousForward);
+        vec2 uv=vec2(dot(relative,previousRight)/(TAN_HALF_FOV*float(size.x)/float(size.y)),dot(relative,previousUp)/TAN_HALF_FOV)/max(z,1e-6)*.5+.5;
+        if(z>0&&all(greaterThanEqual(uv,vec2(0)))&&all(lessThan(uv,vec2(1)))) {
+            vec2 samplePixel=uv*vec2(size)-.5,f=fract(samplePixel);
+            ivec2 base=ivec2(floor(samplePixel));
+            vec3 history=vec3(0);float weight=0;
+            // Validate each bilinear tap separately: never blend across an invalid surface.
+            for(int y=0;y<2;y++) for(int x=0;x<2;x++) {
+                ivec2 p=base+ivec2(x,y);
+                if(any(lessThan(p,ivec2(0)))||any(greaterThanEqual(p,size))) continue;
+                vec4 oldGuide=texelFetch(historyGuide,p,0),oldColor=texelFetch(historyColor,p,0);
+                vec3 oldWorld=previousPosition+oldGuide.w*ray(vec2(p)+.5,size,previousForward,previousRight,previousUp);
+                float footprint=2*TAN_HALF_FOV*length(relative)/float(size.y);
+                if(oldGuide.w<=0||abs(oldColor.a-material)>.1||dot(oldGuide.xyz,guide.xyz)<.92
+                    ||abs(oldGuide.w-length(relative))>.02+2*footprint
+                    ||abs(dot(oldWorld-world,guide.xyz))>max(.01,length(relative)*.001)) continue;
+                float w=(x==0?1-f.x:f.x)*(y==0?1-f.y:f.y);
+                history+=w*oldColor.rgb;weight+=w;
+            }
+            if(weight>.001) {
+                vec3 lower=current,upper=current;
+                for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
+                    vec3 c=texelFetch(currentColor,clamp(pixel+ivec2(x,y),ivec2(0),size-1),0).rgb;
+                    lower=min(lower,c);upper=max(upper,c);
+                }
+                // Current neighborhood bounds suppress stale highlights and disocclusion trails.
+                history=clamp(history/weight,lower,upper);
+                result=mix(current,history,historyWeight*min(weight,1));
+            }
+        }
+    }
+    imageStore(outputColor,pixel,vec4(result,material));
+    imageStore(outputGuide,pixel,guide);
+}

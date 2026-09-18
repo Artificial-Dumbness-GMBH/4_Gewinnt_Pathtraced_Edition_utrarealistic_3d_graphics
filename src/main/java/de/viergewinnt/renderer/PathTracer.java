@@ -32,6 +32,8 @@ public final class PathTracer implements AutoCloseable {
     private final ComputeShader shader;
     private final ScreenRenderer screen;
     private final AtrousDenoiser atrous;
+    private final TemporalAA temporal;
+    private int sampleSequence;
     private RenderSettings settings;
     private Camera lastCamera;
     private boolean displayDirty=true;
@@ -50,10 +52,10 @@ public final class PathTracer implements AutoCloseable {
 
         half=Boolean.getBoolean("pt.half");bruteForce=Boolean.getBoolean("pt.bruteForce");
         shader=new ComputeShader(groupX,groupY,half);
-        ScreenRenderer createdScreen=null;AtrousDenoiser createdAtrous=null;
-        try { createdScreen=new ScreenRenderer();createdAtrous=new AtrousDenoiser();scene=new GPUScene(initialScene); }
-        catch(RuntimeException e) { if(createdAtrous!=null) createdAtrous.close();if(createdScreen!=null) createdScreen.close();shader.close();throw e; }
-        screen=createdScreen;atrous=createdAtrous;
+        ScreenRenderer createdScreen=null;AtrousDenoiser createdAtrous=null;TemporalAA createdTemporal=null;
+        try { createdScreen=new ScreenRenderer();createdAtrous=new AtrousDenoiser();createdTemporal=new TemporalAA();scene=new GPUScene(initialScene); }
+        catch(RuntimeException e) { if(createdTemporal!=null) createdTemporal.close();if(createdAtrous!=null) createdAtrous.close();if(createdScreen!=null) createdScreen.close();shader.close();throw e; }
+        screen=createdScreen;atrous=createdAtrous;temporal=createdTemporal;
     }
     private static int option(String name,int fallback,int min,int max) {
         int n=Integer.parseInt(System.getProperty(name,Integer.toString(fallback)));
@@ -64,13 +66,16 @@ public final class PathTracer implements AutoCloseable {
         if(!Float.isFinite(lift)||lift<0||lift>scene.movingMaxLift) throw new IllegalArgumentException("Drop outside BVH bounds");
         if(dropLift!=lift) { dropLift=lift;reset(); }
     }
-    public void reset() { frameIndex=0;displayDirty=true; }
+    private void resetAccumulation() { frameIndex=0;displayDirty=true; }
+    public void reset() { resetAccumulation();temporal.reset(); }
     public int depthGuideTexture() { return normalDepth; }
     public RenderSettings settings() { return settings; }
     public void applySettings(RenderSettings next) {
         java.util.Objects.requireNonNull(next);
         if(!settings.sameSampling(next)) reset();
-        if(settings.denoiser()!=next.denoiser()||settings.denoiseStrength()!=next.denoiseStrength()) displayDirty=true;
+        if(settings.denoiser()!=next.denoiser()||settings.denoiseStrength()!=next.denoiseStrength()||settings.taa()!=next.taa()) {
+            displayDirty=true;temporal.reset();
+        }
         settings=next;
     }
     public int samples() { return frameIndex*settings.samplesPerFrame(); }
@@ -82,7 +87,7 @@ public final class PathTracer implements AutoCloseable {
     private void traceFrame(Camera camera,int framebufferWidth,int framebufferHeight) {
         lastCamera=camera;
         Vec3 position=camera.position(),forward=camera.forward();
-        if(different(position,lastPosition)||different(forward,lastForward)) reset();
+        if(different(position,lastPosition)||different(forward,lastForward)) resetAccumulation();
         lastPosition=position;lastForward=forward;
         float scale=Math.min(1f,Math.min((float)settings.maxWidth()/framebufferWidth,(float)settings.maxHeight()/framebufferHeight));
         int w=Math.max(1,Math.round(framebufferWidth*scale)),h=Math.max(1,Math.round(framebufferHeight*scale));
@@ -98,6 +103,7 @@ public final class PathTracer implements AutoCloseable {
         scene.bind();shader.use();
         shader.vector("lightPosition",Scene.LIGHT_POSITION);shader.vector("lightSize",Scene.LIGHT_SIZE);
         shader.vector("lightRadiance",Scene.LIGHT_RADIANCE);shader.integer("lightMaterial",Scene.LIGHT_MATERIAL);
+        shader.integer("sampleSequence",sampleSequence);sampleSequence=(sampleSequence+1)&0x007fffff;
         shader.integer("frameIndex",frameIndex);shader.integer("samplesPerFrame",settings.samplesPerFrame());shader.integer("maxBounces",settings.bounces());
         shader.integer("movingVertexStart",scene.movingVertexStart);shader.vector("movingOffset",new Vec3(0,dropLift,0));
         shader.integer("triangleCount",scene.triangleCount);shader.integer("bruteForce",bruteForce?1:0);
@@ -127,6 +133,7 @@ public final class PathTracer implements AutoCloseable {
         if(displayDirty) {
             displayTexture=settings.denoiser()==RenderSettings.Denoiser.ATROUS
                 ?atrous.filter(texture,normalDepth,albedoGuide,width,height,lastCamera,samples(),settings.denoiseStrength()):texture;
+            if(settings.taa()) displayTexture=temporal.resolve(displayTexture,normalDepth,albedoGuide,width,height,lastCamera,frameIndex);
             displayDirty=false;
         }
         screen.render(displayTexture,normalDepth,albedoGuide,w,h,paused,samples(),settings);
@@ -143,5 +150,5 @@ public final class PathTracer implements AutoCloseable {
         if(texture!=0) glDeleteTextures(texture);if(normalDepth!=0) glDeleteTextures(normalDepth);if(albedoGuide!=0) glDeleteTextures(albedoGuide);
         texture=normalDepth=albedoGuide=0;
     }
-    @Override public void close() { deleteTextures();scene.close();atrous.close();screen.close();shader.close(); }
+    @Override public void close() { deleteTextures();scene.close();temporal.close();atrous.close();screen.close();shader.close(); }
 }
