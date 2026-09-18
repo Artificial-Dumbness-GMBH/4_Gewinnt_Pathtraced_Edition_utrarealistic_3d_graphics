@@ -35,6 +35,7 @@ public final class PathTracer implements AutoCloseable {
     private RenderSettings settings;
     private Camera lastCamera;
     private boolean displayDirty=true;
+    private float dropLift;
     private int displayTexture;
     private GPUScene scene;
     private int texture,normalDepth,albedoGuide,width,height,frameIndex;
@@ -58,7 +59,11 @@ public final class PathTracer implements AutoCloseable {
         int n=Integer.parseInt(System.getProperty(name,Integer.toString(fallback)));
         if(n<min||n>max||(name.startsWith("pt.group")&&n!=8&&n!=16)) throw new IllegalArgumentException(name+" out of range");return n;
     }
-    public void setScene(Scene next) { GPUScene replacement=new GPUScene(next);scene.close();scene=replacement;reset(); }
+    public void setScene(Scene next) { GPUScene replacement=new GPUScene(next);scene.close();scene=replacement;dropLift=0;reset(); }
+    public void setDropLift(float lift) {
+        if(!Float.isFinite(lift)||lift<0||lift>scene.movingMaxLift) throw new IllegalArgumentException("Drop outside BVH bounds");
+        if(dropLift!=lift) { dropLift=lift;reset(); }
+    }
     public void reset() { frameIndex=0;displayDirty=true; }
     public int depthGuideTexture() { return normalDepth; }
     public RenderSettings settings() { return settings; }
@@ -94,6 +99,7 @@ public final class PathTracer implements AutoCloseable {
         shader.vector("lightPosition",Scene.LIGHT_POSITION);shader.vector("lightSize",Scene.LIGHT_SIZE);
         shader.vector("lightRadiance",Scene.LIGHT_RADIANCE);shader.integer("lightMaterial",Scene.LIGHT_MATERIAL);
         shader.integer("frameIndex",frameIndex);shader.integer("samplesPerFrame",settings.samplesPerFrame());shader.integer("maxBounces",settings.bounces());
+        shader.integer("movingVertexStart",scene.movingVertexStart);shader.vector("movingOffset",new Vec3(0,dropLift,0));
         shader.integer("triangleCount",scene.triangleCount);shader.integer("bruteForce",bruteForce?1:0);
         shader.integer("gradient",Boolean.getBoolean("pt.gradient")?1:0);
         shader.vector("cameraPosition",camera.position());shader.vector("cameraForward",camera.forward());

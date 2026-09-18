@@ -32,6 +32,27 @@ Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
 wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
 der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
+## Fallende Spielsteine und echte Öffnungen
+
+Die Tasten 1–7 lassen einen Stein von oben in den gewählten Schacht fallen.
+Beschleunigung und ein kurzer, gedämpfter Aufsetzer machen die Bewegung sichtbar.
+Die beiden Brettseiten besitzen jeweils 42 kreisförmige Durchbrüche; zwischen ihnen
+bleiben sieben durchgehende Fallschächte und oben offene Einwurfschlitze frei.
+Die Steine liegen auf dem Boden bzw. direkt aufeinander, statt im Raster zu schweben.
+
+Während des Falls ist der nächste Einwurf gesperrt. Zugwechsel, Sieg und Unentschieden
+werden erst nach dem Aufsetzen übernommen. Pause friert den Fall ein; Neustart
+entfernt auch den gerade fallenden Stein. Das Hologramm sitzt oberhalb des Einwurfs.
+
+Die GPU verschiebt nur den bewegten Stein per Uniform. Einmalig erweiterte BVH-Grenzen
+decken seinen gesamten Fallweg ab; es gibt keinen Szenen-Neuaufbau oder Mesh-Upload
+pro Animationsbild. Bei Positionsänderungen werden Akkumulation und Denoiser-Guides
+zurückgesetzt, damit keine alten Steinpositionen nachziehen. Kein Upscaler hinzugefügt.
+
+![Gelochtes Brett mit Stein vor dem Einwurf](docs/coin-drop.jpg)
+
+[Gerenderte Fallanimation](docs/coin-drop.mp4) · [Validierung](docs/coin-drop-validation.md)
+
 ## Holografischer Spielstatus
 
 Über dem Brett schwebt jetzt eine transparente, räumlich verankerte Statusanzeige:

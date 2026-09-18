@@ -12,6 +12,27 @@ public final class Mesh {
         int[] indices={0,2,3,0,3,1,4,5,7,4,7,6,0,4,6,0,6,2,1,3,7,1,7,5,0,1,5,0,5,4,2,6,7,2,7,3};
         for(int i=0;i<indices.length;i+=3) triangles.add(new Triangle(o+indices[i],o+indices[i+1],o+indices[i+2],material));
     }
+    /** Closed rectangular plate with a real circular through-hole along Z. */
+    public void perforatedPlate(float x,float y,float z,float sx,float sy,float depth,float hole,int material) {
+        int o=vertices.size(),n=32;
+        for(int ring=0;ring<4;ring++) for(int i=0;i<n;i++) {
+            int edge=i/8;float t=(i%8)/8f;
+            float px=edge==0?sx:edge==1?sx*(1-2*t):edge==2?-sx:sx*(-1+2*t);
+            float py=edge==0?sy*(-1+2*t):edge==1?sy:edge==2?sy*(1-2*t):-sy;
+            if(ring%2==1) { float scale=hole/(float)Math.sqrt(px*px+py*py);px*=scale;py*=scale; }
+            vertices.add(new Vec3(x+px,y+py,z+(ring<2?-depth:depth)));
+        }
+        for(int i=0;i<n;i++) {
+            int j=(i+1)%n;
+            quad(o+i,o+n+i,o+n+j,o+j,material); // back
+            quad(o+2*n+i,o+2*n+j,o+3*n+j,o+3*n+i,material); // front
+            quad(o+i,o+j,o+2*n+j,o+2*n+i,material); // outside
+            quad(o+n+i,o+3*n+i,o+3*n+j,o+n+j,material); // hole wall
+        }
+    }
+    private void quad(int a,int b,int c,int d,int material) {
+        triangles.add(new Triangle(a,b,c,material));triangles.add(new Triangle(a,c,d,material));
+    }
     /** Closed bevelled token along Z. Rings catch highlights on both faces. */
     public void disc(float x,float y,float z,float radius,float halfDepth,int material) {
         int o=vertices.size(),segments=64;

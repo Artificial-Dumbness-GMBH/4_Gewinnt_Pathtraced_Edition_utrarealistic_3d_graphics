@@ -10,6 +10,7 @@ public final class SceneRegressionTest {
         if(!condition) throw new AssertionError(message);
     }
     public static void main(String[] args) {
+        DropRegressionTest.run();
         Board board=new Board();board.dropPiece(2,Player.Red);
         Game game=new Game(board);
         check(game.getBoard()==board,"supplied board discarded");

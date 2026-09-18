@@ -12,7 +12,7 @@ import static org.lwjgl.opengl.GL43.*;
 
 /** World-anchored, depth-tested hologram. Text changes only when the game state changes. */
 public final class HologramRenderer implements AutoCloseable {
-    public static final Vec3 ANCHOR=new Vec3(0,7.65f,0);
+    public static final Vec3 ANCHOR=new Vec3(0,8.45f,0);
     private static final int WIDTH=1024,HEIGHT=256;
     private final ShaderProgram shader=new ShaderProgram(new String[]{"/shaders/hologram.vert","/shaders/hologram.frag"},new int[]{GL_VERTEX_SHADER,GL_FRAGMENT_SHADER},"");
     private final int texture=glGenTextures(),vao=glGenVertexArrays();

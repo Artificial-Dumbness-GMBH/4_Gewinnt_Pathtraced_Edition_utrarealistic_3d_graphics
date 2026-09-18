@@ -90,6 +90,8 @@ public class RendererSmokeTest {
    }
   }
   System.out.println("Six format/workgroup variants passed");
+  System.clearProperty("pt.half");
+  DropRenderTest.run();
   AtrousDenoiserTest.run();
   de.viergewinnt.hud.HologramSmokeTest.run();
   glfwDestroyWindow(window);glfwTerminate();

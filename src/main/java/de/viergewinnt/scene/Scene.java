@@ -1,6 +1,7 @@
 package de.viergewinnt.scene;
 
 import de.viergewinnt.Game.Board;
+import de.viergewinnt.Game.DropAnimation;
 import de.viergewinnt.Game.Player;
 import java.util.ArrayList;
 import java.util.List;
@@ -15,7 +16,10 @@ public final class Scene {
     public static final Vec3 LIGHT_SIZE=new Vec3(6,0,5);
     public static final Vec3 LIGHT_RADIANCE=new Vec3(18,17.2f,16);
     public static final int LIGHT_MATERIAL=4;
-    public static Scene fromBoard(Board board) {
+    public int movingVertexStart=-1;
+    public float movingMaxLift;
+    public static Scene fromBoard(Board board) { return fromBoard(board,null); }
+    public static Scene fromBoard(Board board,DropAnimation drop) {
         Scene s=new Scene();
         s.materials.add(Material.pbr(.34f,.16f,.065f,.42f,0,1)); // walnut
         s.materials.add(Material.pbr(.055f,.085f,.12f,.27f,.72f,0)); // anodized frame
@@ -33,14 +37,19 @@ public final class Scene {
             s.mesh.box(side*5,-1.15f,-2.3f,.16f,.75f,.16f,1);
             s.mesh.box(side*5,-1.15f,2.3f,.16f,.75f,.16f,1);
             s.mesh.box(side*3.68f,3,0,.12f,3.1f,.30f,1);
-            s.mesh.box(side*3.68f,.08f,0,.35f,.12f,.95f,1);
+            s.mesh.box(side*3.90f,.08f,0,.20f,.12f,.95f,1);
             s.mesh.box(side*3.68f,3,.305f,.028f,3,.016f,6);
         }
-        // Open grid keeps every legal cell visible from both sides.
-        for(int c=0;c<=Board.COLUMNS;c++) s.mesh.box(c-3.5f,3,0,.045f,3.05f,.22f,1);
-        for(int r=0;r<=Board.ROWS;r++) s.mesh.box(0,r,0,3.55f,.045f,.22f,1);
-        s.mesh.box(0,6.12f,0,3.8f,.1f,.3f,0);
-        s.mesh.box(0,6.23f,0,3.8f,.018f,.31f,6);
+        // Two perforated faces retain the coins; the space BETWEEN them is open vertically.
+        for(int side=-1;side<=1;side+=2) {
+            for(int r=0;r<Board.ROWS;r++) for(int c=0;c<Board.COLUMNS;c++)
+                s.mesh.perforatedPlate(c-3,DropAnimation.cellY(r),side*.235f,.5f,DropAnimation.ROW_PITCH/2,.035f,.425f,1);
+            // Split top rail: seven genuine entry slots, no cap over their fall paths.
+            s.mesh.box(0,6.03f,side*.26f,3.55f,.22f,.06f,0);
+            s.mesh.box(0,6.25f,side*.26f,3.55f,.015f,.061f,6);
+        }
+        for(int c=0;c<=Board.COLUMNS;c++) s.mesh.box(c-3.5f,3.15f,0,.015f,3.10f,.20f,1);
+        s.mesh.box(0,0,0,3.55f,.05f,.30f,1);
         // A 44 x 52 room around the origin; the board/table are centered at x=z=0.
         s.mesh.box(0,6,-ROOM_HALF_DEPTH,ROOM_HALF_WIDTH,8,.2f,7);
         s.mesh.box(0,6,ROOM_HALF_DEPTH,ROOM_HALF_WIDTH,8,.2f,7);
@@ -68,7 +77,11 @@ public final class Scene {
         s.mesh.box(p.x,p.y+.08f,p.z,h.x+.08f,.07f,h.z+.08f,1);
         for(int r=0;r<Board.ROWS;r++) for(int c=0;c<Board.COLUMNS;c++) {
             Player piece=board.getPiece(r,c);
-            if(piece!=null) s.mesh.disc(c-3,Board.ROWS-r-.5f,0,.42f,.16f,piece==Player.Red?2:3);
+            if(piece!=null) s.mesh.disc(c-3,DropAnimation.cellY(r),0,DropAnimation.RADIUS,.16f,piece==Player.Red?2:3);
+        }
+        if(drop!=null&&drop.active()) {
+            s.movingVertexStart=s.mesh.vertices.size();s.movingMaxLift=drop.maxLift();
+            s.mesh.disc(drop.column()-3,DropAnimation.cellY(drop.row()),0,DropAnimation.RADIUS,.16f,drop.player()==Player.Red?2:3);
         }
         return s;
     }

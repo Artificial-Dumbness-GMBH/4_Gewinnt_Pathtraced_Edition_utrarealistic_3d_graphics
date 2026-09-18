@@ -49,6 +49,7 @@ import static org.lwjgl.opengl.GL11.glGetString;
 
 import de.viergewinnt.Game.Board;
 import de.viergewinnt.Game.Game;
+import de.viergewinnt.Game.DropAnimation;
 import de.viergewinnt.hud.HUD;
 import de.viergewinnt.hud.HologramRenderer;
 import de.viergewinnt.input.Input;
@@ -97,6 +98,7 @@ public class Window {
             Camera camera=new Camera();
             boolean[] dropKeys=new boolean[Board.COLUMNS],menuKeys=new boolean[4];
             Game game=new Game(board);
+            DropAnimation drop=new DropAnimation();
             RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
             PauseMenu menu=new PauseMenu(settings);
             int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];
@@ -109,6 +111,7 @@ public class Window {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
                     glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);
                     if(width[0]<=0||height[0]<=0||windowWidth[0]<=0||windowHeight[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
+                    boolean wasPaused=paused;
                     boolean escape=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
                     if(escape&&!escapeHeld) {
                         if(!(paused&&menu.back())) {
@@ -133,7 +136,7 @@ public class Window {
                         PauseMenu.Action action=mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
                         switch(action) {
                             case RESUME -> { paused=false;captureMouse(camera,windowWidth[0],windowHeight[0]); }
-                            case RESTART -> { game.reset();tracer.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
+                            case RESTART -> { drop.cancel();game.reset();tracer.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
                             case QUIT -> glfwSetWindowShouldClose(window,true);
                             case SETTINGS -> {
                                 tracer.applySettings(menu.settings());
@@ -144,7 +147,10 @@ public class Window {
                         }
                     } else {
                         camera.update(window,dt); // The tracer detects camera changes itself.
-                        if(!game.isGameOver()&&column>=0&&game.play(column)) tracer.setScene(Scene.fromBoard(game.getBoard()));
+                        boolean falling=drop.active();
+                        if(drop.advance(game,wasPaused?0:dt)) tracer.setScene(Scene.fromBoard(game.getBoard()));
+                        if(!falling&&column>=0&&drop.start(game,column)) tracer.setScene(Scene.fromBoard(game.getBoard(),drop));
+                        if(drop.active()) tracer.setDropLift(drop.lift());
                     }
                     mouseHeld=mouse;
                     if(glfwWindowShouldClose(window)) break;

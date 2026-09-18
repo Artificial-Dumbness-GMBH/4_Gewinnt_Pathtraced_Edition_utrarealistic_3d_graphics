@@ -12,7 +12,8 @@ layout(std430,binding=3) readonly buffer Nodes { Node nodes[]; };
 uniform int frameIndex,samplesPerFrame,maxBounces,triangleCount,bruteForce,gradient;
 uniform vec3 cameraPosition,cameraForward,cameraRight,cameraUp;
 uniform vec3 lightPosition,lightSize,lightRadiance;
-uniform int lightMaterial;
+uniform int lightMaterial,movingVertexStart;
+uniform vec3 movingOffset;
 const float PI=3.14159265359;
 uint rng;
 float randomFloat() {
@@ -21,6 +22,7 @@ float randomFloat() {
     return float((word>>22u)^word)*(1.0/4294967296.0);
 }
 bool boxHit(Node n,vec3 origin,vec3 direction,float closest) {
+    if(n.lower.w>0) origin-=movingOffset; // Tight local bounds for moving-only subtrees.
     float lo=.0001,hi=closest;
     for(int a=0;a<3;a++) {
         if(abs(direction[a])<1e-8) {
@@ -34,6 +36,7 @@ bool boxHit(Node n,vec3 origin,vec3 direction,float closest) {
 }
 float triangleDistance(int i,vec3 origin,vec3 direction) {
     uvec4 t=triangles[i];vec3 a=vertices[t.x].xyz,e1=vertices[t.y].xyz-a,e2=vertices[t.z].xyz-a;
+    if(movingVertexStart>=0&&t.x>=uint(movingVertexStart)) a+=movingOffset;
     vec3 p=cross(direction,e2);float det=dot(e1,p);if(abs(det)<1e-8) return 1e30;
     vec3 s=origin-a;float u=dot(s,p)/det;if(u<0||u>1) return 1e30;
     vec3 q=cross(s,e1);float v=dot(direction,q)/det;if(v<0||u+v>1) return 1e30;

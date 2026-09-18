@@ -19,7 +19,7 @@ public final class HUDTest {
         check(!full.hasWon(Player.Red)&&!full.hasWon(Player.Blue)&&full.isFull(),"invalid draw fixture");
         check(HUD.status(new Game(full))==HUD.Status.DRAW,"draw label");
         check(HUD.status(null)==HUD.Status.READY,"missing game");
-        check(HologramRenderer.ANCHOR.y-1.875f/2>6.25f,"hologram overlaps board roof");
+        check(HologramRenderer.ANCHOR.y-1.875f/2>de.viergewinnt.Game.DropAnimation.START_Y+de.viergewinnt.Game.DropAnimation.RADIUS,"hologram overlaps entering coin");
         System.out.println("HUD checks passed: turns, invalid moves, both winners, draw, restart and board clearance.");
     }
 }
