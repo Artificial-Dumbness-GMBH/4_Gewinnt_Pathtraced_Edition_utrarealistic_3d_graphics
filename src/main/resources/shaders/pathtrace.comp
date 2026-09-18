@@ -1,7 +1,9 @@
 #version 430 core
 layout(local_size_x=GROUP_X,local_size_y=GROUP_Y) in;
 layout(IMAGE_FORMAT,binding=0) uniform image2D accumulation;
-struct Material { vec4 baseColor; vec4 emission; };
+layout(rgba32f,binding=1) writeonly uniform image2D normalDepth;
+layout(rgba16f,binding=2) writeonly uniform image2D albedoGuide;
+struct Material { vec4 baseColor; vec4 emission; vec4 surface; };
 struct Node { vec4 lower; vec4 upper; ivec4 data; };
 layout(std430,binding=0) readonly buffer Vertices { vec4 vertices[]; };
 layout(std430,binding=1) readonly buffer Triangles { uvec4 triangles[]; };
@@ -9,6 +11,9 @@ layout(std430,binding=2) readonly buffer Materials { Material materials[]; };
 layout(std430,binding=3) readonly buffer Nodes { Node nodes[]; };
 uniform int frameIndex,samplesPerFrame,maxBounces,triangleCount,bruteForce,gradient;
 uniform vec3 cameraPosition,cameraForward,cameraRight,cameraUp;
+uniform vec3 lightPosition,lightSize,lightRadiance;
+uniform int lightMaterial;
+const float PI=3.14159265359;
 uint rng;
 float randomFloat() {
     rng=rng*747796405u+2891336453u;
@@ -60,48 +65,133 @@ vec3 cosineHemisphere(vec3 normal) {
     vec3 tangent=normalize(cross(abs(normal.y)<.99?vec3(0,1,0):vec3(1,0,0),normal));
     return normalize(tangent*(r*cos(phi))+cross(normal,tangent)*(r*sin(phi))+normal*sqrt(max(0,1-r*r)));
 }
-vec3 directLight(vec3 origin,vec3 normal,vec3 baseColor) {
-    vec3 lightPosition=vec3(0,7.9,0);
-    vec3 toLight=lightPosition-origin;
-    float distanceToLight=length(toLight);
-    vec3 lightDirection=toLight/distanceToLight;
-    float cosine=max(dot(normal,lightDirection),0);
-    if(cosine<=0) return vec3(0);
-    vec3 lightRadiance=vec3(6,5.5,4.5);
-    return baseColor*lightRadiance*cosine/(1+distanceToLight*distanceToLight*.08);
+// World-space procedural textures need no external assets or UV seams.
+float hash(vec3 p) { return fract(sin(dot(p,vec3(127.1,311.7,74.7)))*43758.5453); }
+float noise(vec3 p) {
+    vec3 i=floor(p),f=fract(p);f=f*f*(3-2*f);
+    return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+               mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
+}
+vec3 surfaceColor(Material m,vec3 p,out float roughness) {
+    p*=m.surface.w;roughness=m.surface.x;
+    if(m.surface.z==1) {
+        float grain=.5+.5*sin(p.z*18+noise(p*vec3(.15,2,1.5))*3);
+        float broad=noise(p*vec3(.35,2,3));
+        float pores=noise(p*vec3(3,18,55));
+        roughness=clamp(roughness+(pores-.5)*.12,.08,1);
+        return m.baseColor.rgb*mix(.72,1.05,.55*broad+.30*grain+.15*pores);
+    }
+    if(m.surface.z==2) {
+        float mottling=.65+.35*noise(p*4);
+        vec2 tile=abs(fract(p.xz*.35)-.5);
+        float grout=smoothstep(.478,.492,max(tile.x,tile.y));
+        return m.baseColor.rgb*mix(mottling,.30,grout);
+    }
+    return m.baseColor.rgb;
+}
+vec3 fresnel(vec3 f0,float cosine) { return f0+(1-f0)*pow(clamp(1-cosine,0,1),5); }
+float distribution(float nh,float roughness) {
+    float a=roughness*roughness,a2=a*a;
+    float d=nh*nh*(a2-1)+1;
+    return a2/(PI*d*d);
+}
+float masking(float nv,float roughness) {
+    float a=roughness*roughness;
+    return 2*nv/max(nv+sqrt(a*a+(1-a*a)*nv*nv),1e-7);
+}
+float specularChance(float metallic) { return mix(.35,.9,metallic); }
+vec3 brdf(vec3 n,vec3 v,vec3 l,vec3 base,float roughness,float metallic,out float pdf) {
+    float nv=max(dot(n,v),0),nl=max(dot(n,l),0);pdf=0;
+    if(nv<=0||nl<=0||dot(v+l,v+l)<1e-10) return vec3(0);
+    vec3 h=normalize(v+l);float nh=max(dot(n,h),0),vh=max(dot(v,h),1e-6);
+    vec3 f=fresnel(mix(vec3(.04),base,metallic),vh);
+    float d=distribution(nh,roughness),chance=specularChance(metallic);
+    pdf=mix(nl/PI,d*nh/(4*vh),chance);
+    vec3 diffuse=(1-f)*(1-metallic)*base/PI;
+    return diffuse+f*d*masking(nv,roughness)*masking(nl,roughness)/max(4*nv*nl,1e-7);
+}
+vec3 sampleDirection(vec3 n,vec3 v,float roughness,float metallic) {
+    if(randomFloat()>specularChance(metallic)) return cosineHemisphere(n);
+    float a=roughness*roughness,u=min(randomFloat(),.999999),phi=2*PI*randomFloat();
+    float ct=sqrt((1-u)/(1+(a*a-1)*u)),st=sqrt(max(0,1-ct*ct));
+    vec3 t=normalize(cross(abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),n));
+    vec3 h=normalize(t*(st*cos(phi))+cross(n,t)*(st*sin(phi))+n*ct);
+    return reflect(-v,h);
+}
+float lightPdf(vec3 from,vec3 point,vec3 direction) {
+    float lightCosine=max(direction.y,0);
+    return lightCosine>0?dot(point-from,point-from)/(4*lightSize.x*lightSize.z*lightCosine):0;
+}
+float powerWeight(float a,float b) { return a*a/max(a*a+b*b,1e-20); }
+vec3 directLight(vec3 point,vec3 n,vec3 v,vec3 base,float roughness,float metallic,bool lastBounce) {
+    vec3 target=lightPosition+vec3((2*randomFloat()-1)*lightSize.x,0,(2*randomFloat()-1)*lightSize.z);
+    vec3 delta=target-point;float distanceToLight=length(delta);vec3 l=delta/distanceToLight;
+    if(dot(n,l)<=0||l.y<=0) return vec3(0);
+    float distance;vec3 normal;
+    intersectScene(point+n*.001,l,distance,normal);
+    if(distance<distanceToLight-.003) return vec3(0);
+    float pdf;vec3 f=brdf(n,v,l,base,roughness,metallic,pdf);
+    float lp=lightPdf(point,target,l);
+    // No BSDF continuation at the last bounce, so there is no competing estimator.
+    return lightRadiance*f*max(dot(n,l),0)*(lastBounce?1:powerWeight(lp,pdf))/max(lp,1e-7);
 }
 vec3 trace(vec3 origin,vec3 direction) {
-    vec3 radiance=vec3(0),throughput=vec3(1);
+    vec3 radiance=vec3(0),throughput=vec3(1),previousPoint=origin;
+    float previousPdf=0;
     for(int bounce=0;bounce<maxBounces;bounce++) {
         float distance;vec3 normal;int hit=intersectScene(origin,direction,distance,normal);
-        if(hit<0) { radiance+=throughput*mix(vec3(.12,.15,.2),vec3(.55,.7,1),clamp(direction.y*.5+.5,0,1));break; }
-        Material m=materials[triangles[hit].w];radiance+=throughput*m.emission.rgb;
-        radiance+=throughput*m.baseColor.rgb*vec3(.12,.135,.16);
-        radiance+=throughput*directLight(origin+direction*distance,normal,m.baseColor.rgb);
-        // Lambert BRDF*cos/pdf simplifies to baseColor with cosine sampling.
-        throughput*=m.baseColor.rgb;
-        if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
-        if(bounce>=2) {
-            float survival=clamp(max(throughput.r,max(throughput.g,throughput.b)),.05,.95);
-            if(randomFloat()>survival) break;throughput/=survival;
+        if(hit<0) {
+            radiance+=throughput*mix(vec3(.035,.045,.07),vec3(.22,.30,.45),clamp(direction.y*.5+.5,0,1));break;
         }
-        origin+=direction*distance+normal*.001;direction=cosineHemisphere(normal);
+        vec3 point=origin+direction*distance;
+        uint materialIndex=triangles[hit].w;Material m=materials[materialIndex];
+        if(any(greaterThan(m.emission.rgb,vec3(0)))) {
+            float weight=1;
+            if(materialIndex==uint(lightMaterial)) {
+                if(direction.y<=0) break;
+                if(bounce>0) weight=powerWeight(previousPdf,lightPdf(previousPoint,point,direction));
+            }
+            radiance+=throughput*m.emission.rgb*weight;break;
+        }
+        float roughness;vec3 base=surfaceColor(m,point,roughness),view=-direction;
+        radiance+=throughput*directLight(point,normal,view,base,roughness,m.surface.y,bounce==maxBounces-1);
+        if(bounce==maxBounces-1) break;
+        vec3 next=sampleDirection(normal,view,roughness,m.surface.y);
+        float pdf;vec3 f=brdf(normal,view,next,base,roughness,m.surface.y,pdf);
+        if(pdf<=1e-8) break;
+        throughput*=f*max(dot(normal,next),0)/pdf;
+        if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
+        // Fixed bounce budget: no roulette probability to fold into MIS densities.
+        previousPoint=point;previousPdf=pdf;
+        origin=point+normal*.001;direction=next;
     }
     return radiance;
+}
+vec3 cameraRay(vec2 pixel,ivec2 size) {
+    vec2 p=pixel/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
+    return normalize(cameraForward+.57735026919*(p.x*cameraRight+p.y*cameraUp));
 }
 void main() {
     ivec2 pixel=ivec2(gl_GlobalInvocationID.xy),size=imageSize(accumulation);
     if(any(greaterThanEqual(pixel,size))) return;
+    // Deterministic primary-hit guides remain stable while samples accumulate.
+    vec3 guideRay=cameraRay(vec2(pixel)+.5,size),normal;float depth;
+    int hit=intersectScene(cameraPosition,guideRay,depth,normal);
+    vec3 albedo=vec3(0);float materialId=-1;
+    if(hit>=0) {
+        float roughness;materialId=float(triangles[hit].w);
+        albedo=surfaceColor(materials[triangles[hit].w],cameraPosition+guideRay*depth,roughness);
+    } else { depth=0; }
+    imageStore(normalDepth,pixel,vec4(normal,depth));
+    imageStore(albedoGuide,pixel,vec4(albedo,materialId));
     vec3 sampleColor=vec3(0);
     for(int sampleIndex=0;sampleIndex<samplesPerFrame;sampleIndex++) {
         rng=(uint(pixel.x)+uint(pixel.y)*uint(size.x))^((uint(frameIndex*samplesPerFrame+sampleIndex)+1u)*277803737u);
         vec2 jitter=vec2(randomFloat(),randomFloat());
-        vec2 p=(vec2(pixel)+jitter)/vec2(size)*2-1;p.x*=float(size.x)/float(size.y);
-        vec3 ray=normalize(cameraForward+.57735026919*(p.x*cameraRight+p.y*cameraUp));
+        vec3 ray=cameraRay(vec2(pixel)+jitter,size);
         sampleColor+=gradient!=0?vec3(vec2(pixel)/vec2(size),.2):trace(cameraPosition,ray);
     }
     sampleColor/=float(samplesPerFrame);
-    // Never read undefined texture contents after allocation/reset.
     vec3 mean=sampleColor;
     if(frameIndex>0) { vec3 previous=imageLoad(accumulation,pixel).rgb;mean=previous+(sampleColor-previous)/float(frameIndex+1); }
     imageStore(accumulation,pixel,vec4(mean,1));

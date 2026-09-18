@@ -1,55 +1,140 @@
-# 4 Gewinnt – Compute Pathtracing
+# 4 Gewinnt – PBR Pathtraced Edition
 
-Die vorhandenen `Board`-/`Player`-Klassen bleiben unverändert. `Main` erzeugt wie zuvor
-sein Beispielbrett und öffnet danach den Renderer. `--console` führt nur das bisherige
-Konsolenbeispiel aus. `Window.create()` bleibt nutzbar; `create(Board)` übernimmt ein Brett.
+Ein spielbares Vier-Gewinnt mit progressivem OpenGL-Compute-Pathtracing,
+Metall-/Kunststoffmaterialien, prozeduralem Holz und Stein sowie geometriegestütztem Denoising.
+
+![Zentraler Spieltisch im vergrößerten Raum](docs/room-preview.jpg)
+
+*Echter Renderer-Screenshot: intern 640×360, Ausgabe 1280×720, 100 spp, 3 Bounces und À-Trous; Beispielbrett mit 14 Zügen.*
 
 ## Start
 
-JDK 25 und Maven installieren. Das Projekt kompiliert Java-25-Quellcode.
-Ein OpenGL-4.6-Kontext wird bevorzugt, mit Fallback auf 4.3 (Compute/SSBO-Mindestanforderung).
-Windows-Natives sind wie bisher voreingestellt.
-
-### Dedizierte GPU unter Windows
-
-Ein Java-Prozess kann den OpenGL-Adapter nicht zuverlässig selbst gegen die
-Windows-Grafikpräferenz erzwingen. Das Spiel prüft deshalb nach dem Start den
-tatsächlich verwendeten Hersteller und Renderer und gibt ihn aus. Für die
-dedizierte GPU muss `java.exe` beziehungsweise `javaw.exe` in Windows unter
-**Einstellungen → System → Anzeige → Grafik** als Desktop-App hinzugefügt und
-auf **Hohe Leistung** gestellt werden. Bei NVIDIA-Laptops kann zusätzlich im
-NVIDIA-Control-Panel unter **Manage 3D settings → Program Settings** die
-verwendete `javaw.exe` auf die NVIDIA-Hochleistungs-GPU gesetzt werden.
-Im Terminal muss danach eine Ausgabe wie `GPU: NVIDIA ...` oder `GPU: AMD ...`
-erscheinen, nicht `Microsoft Basic Render Driver`, `GDI Generic`, `llvmpipe`
-oder `Software`.
+JDK 25 und Maven installieren. OpenGL 4.3 oder neuer ist erforderlich;
+4.6 wird bevorzugt, mit Fallback auf 4.3. Windows-Natives sind voreingestellt.
 
 ```sh
 mvn test
 mvn compile exec:java
+# Konsolenbeispiel ohne Grafik
 mvn compile exec:java -Dexec.args=--console
-# Linux x86_64: vorhandene Native-Auswahl überschreiben
+# Linux x86_64
 mvn compile exec:java -Dlwjgl.natives=natives-linux
 ```
 
-WASD bewegt die Kamera; rechte Maustaste halten und Maus bewegen dreht sie.
-1–7 lässt abwechselnd rote/blaue Steine in die gewählte Spalte fallen; Escape beendet.
-Die existierende Spiellogik enthält noch keine Gewinnererkennung.
+WASD bewegt die Kamera, die eingefangene Maus dreht sie ohne zusätzliche Maustaste.
+Tasten 1–7 werfen abwechselnd rote/blaue Steine ein. Siege und Unentschieden
+beenden die Eingabe. Escape öffnet/schließt das Pausenmenü mit Weiter, Neustart
+und Beenden. `Window.create(Board)` übernimmt das übergebene Brett einschließlich
+Zugfolge und eines bereits bestehenden Gewinners; `create()` startet leer.
 
-## Implementierter Kern
+Unter Windows bei Bedarf `java.exe`/`javaw.exe` unter Einstellungen → System →
+Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
+wird beim Start ausgegeben. Das interaktive Fenster lehnt Software-Renderer ab;
+der separate EGL-Test erlaubt Software-Rendering zur automatisierten Prüfung.
 
-Scene/Camera/Mesh → CPU-BVH (binäre 12-Bin-SAH) → einmaliger SSBO-Upload →
-Compute-Pathtracing → progressiver Mittelwert → Reinhard-Tonemapping → sRGB-Ausgabe.
+## Pausenmenü und Einstellungen
 
-- Standard: maximal 960×540, 8×8 Workgroup, 1 Bounce, 8 Samples/Frame, RGBA32F plus kantenbewusster Bilateral-Denoiser. Der rauschärmere Direktlichtmodus ist für Kamerabewegung voreingestellt. Für mehr indirekte Beleuchtung kann `-Dpt.bounces=3` verwendet werden; die Sample-Anzahl ist bis maximal 16 einstellbar.
-- Dreiecksgeometrie für Brett, Boden, Lichtfläche und zylindrische Spielsteine.
-- Diffuse Lambert-Materialien, Emission, Himmel, Cosinus-Hemisphere-Sampling;
-  Russian Roulette ab dem dritten Treffer für längere Pfade.
-- Kameraänderung, neue Szene und interne Auflösungsänderung setzen die Accumulation zurück.
-- Resize verwendet Framebuffer-Pixel, hält das Seitenverhältnis und pausiert bei Minimierung.
-- Fullscreen Triangle skaliert bilinear auf die Fenstergröße; FPS und spp im Fenstertitel.
-- Shaderfehler enthalten Ressourcennamen und Compilerlog; GL-Ressourcen werden freigegeben.
-- Szenendaten bleiben zwischen Zügen auf der GPU. Kamera-/Frame-Uniforms ändern sich pro Frame.
+Escape öffnet das neue Pausenmenü. Unter **Grafik** lassen sich Einstellungen
+sofort ändern. Maus oder Tab/Pfeiltasten + Enter bedienen dieselben Controls;
+Escape geht aus Grafik zurück zur Spielseite und setzt von dort das Spiel fort.
+
+![Grafikeinstellungen im Spiel](docs/settings-preview.jpg)
+
+| Einstellung | Auswahl |
+|---|---|
+| Denoiser | **À-Trous · LWJGL** (Standard), **Eigener · Bilateral**, **Aus** |
+| Filterstärke | 25–200 %; bei ausgeschaltetem Denoiser deaktiviert |
+| Path-Bounces | 1–8 |
+| Samples / Frame | 1, 2, 4, 8, 16 |
+| Render-Auflösung | Obergrenze 640×360, 960×540, 1280×720, 1920×1080, 3840×2160 |
+| Belichtung | 0,25×–3× |
+
+**Standardwerte** stellt die Werkseinstellungen wieder her. Einstellungen werden
+atomar unter `~/.viergewinnt/render.properties` gespeichert (auch unter Windows
+im Benutzerverzeichnis). `-Dpt.settingsFile=...` wählt eine andere Datei.
+Explizite `-Dpt.*`-Startparameter haben beim Start Vorrang. Kann nicht gespeichert
+werden, zeigt das Menü „Nur für diese Sitzung“ an; die Steuerung bleibt nutzbar.
+Beschädigte Konfigurationsdateien führen zu Standardwerten statt zu einem Absturz.
+
+Denoiser, Filterstärke und Belichtung behalten die vorhandenen Rohsamples bei.
+Bounces, Samples/Frame und Auflösung setzen die Accumulation zurück. Während der
+Pause berechnet der Renderer maximal bis 64 spp weiter und friert das Bild danach
+ein; UI-Änderungen benötigen dann kein erneutes Pathtracing.
+
+Der zweite Filter ist eine angepasste, quelloffen mitgelieferte Implementierung
+von [LWJGLs À-Trous-Denoiser](https://github.com/LWJGL/lwjgl3-demos/blob/0846b5d965e3015c556ac26b802b63f8ea8aa129/res/org/lwjgl/demo/opengl/raytracing/tutorial5/atrous.fs.glsl).
+Er läuft in vier GPU-Durchläufen mit Schrittweiten 1, 2, 4, 8 und verwendet
+Farbe, Normale, Flächenabstand, Albedo und Material-ID als Kantenschutz.
+Originalshader, BSD-3-Clause-Lizenz und Änderungsnotiz liegen unter
+`src/main/resources/third-party/lwjgl-atrous/` und werden mit der Anwendung verpackt.
+Es handelt sich um einen räumlichen Wavelet-Filter, nicht um einen KI-Denoiser.
+
+## Bildqualität und Umgebung
+
+- GGX-Mikrofacetten-BRDF mit Schlick-Fresnel, Smith-Masking und
+  Metallic/Roughness-Materialien. Diffuse und spiegelnde Pfade verwenden
+  eine gemeinsame, zur Stichprobenwahl passende Wahrscheinlichkeitsdichte.
+- Ein rechteckiges Flächenlicht mit Schattenstrahlen und weichen Schatten.
+  Multiple Importance Sampling gewichtet Licht- und BRDF-Sampling, damit
+  indirekte Lichttreffer die Energie nicht doppelt addieren. Der letzte Bounce
+  verwendet ausschließlich den Direktlichtschätzer ohne konkurrierendes Gewicht.
+- Walnussholz mit Maserung und variabler Rauheit, Steinfliesen, dunkler
+  Metallrahmen, Messingdetails und farbige Spielsteine mit abgeschrägtem Rand.
+  Texturen werden im Weltkoordinatenraum berechnet: keine Downloads, keine UV-Nähte.
+- Ein geschlossener Raum mit **44×52 Welteinheiten** Grundfläche, Decke,
+  Wandverkleidung, umlaufenden Details und zentraler Deckenbeleuchtung.
+  Tisch und Spielfeld stehen bei **X=0, Z=0** auf einem zentralen Teppich.
+  Die Kamera kann um den Tisch herumgehen; Tisch und Außenwände begrenzen die Bewegung.
+- Der bisherige 5×5-Bilateralfilter bleibt als **Eigener** auswählbar; seine
+  Filterstärke sinkt bei steigender Samplezahl. Alternativ steht der mehrstufige
+  **À-Trous**-Filter zur Verfügung. Filmic-Tonemapping und eine einzige
+  lineare → sRGB-Konvertierung folgen danach.
+- Kamera-, Szenen- und Auflösungsänderungen setzen die Accumulation zurück.
+  Der Samplezähler zeigt tatsächliche Samples pro Pixel, nicht Frames.
+- Pausenmenü und Klickbereiche verwenden das aktuelle Seitenverhältnis;
+  Cursorpositionen werden in Fensterkoordinaten statt Framebuffer-Pixeln ausgewertet.
+
+## Einstellungen
+
+Standard: maximal **960×540**, **3 Bounces**, **4 Samples pro Frame**, **8×8**
+Workgroup, **RGBA32F** und **À-Trous**. Mehr Bounces und Schattenstrahlen kosten GPU-Zeit;
+Frameraten müssen auf der Zielhardware gemessen werden.
+
+```sh
+# Schnellerer Modus für schwächere GPUs; weniger indirektes Licht
+mvn compile exec:java -Dpt.bounces=1 -Dpt.samplesPerFrame=2
+# Höhere Qualität
+mvn compile exec:java -Dpt.width=1920 -Dpt.height=1080 -Dpt.samplesPerFrame=8 -Dpt.bounces=4
+# Denoiser direkt auswählen (zusätzlich im Pausenmenü umschaltbar)
+mvn compile exec:java -Dpt.denoiser=atrous
+mvn compile exec:java -Dpt.denoiser=own
+mvn compile exec:java -Dpt.denoiser=off
+# Legacy-Schalter bleibt erhalten
+mvn compile exec:java -Dpt.noDenoise=true
+# Filterstärke und Belichtung
+mvn compile exec:java -Dpt.denoiseStrength=1.25 -Dpt.exposure=1.25
+# Diagnose ohne Pathtracing-Farbwerte
+mvn compile exec:java -Dpt.gradient=true
+# Langsamer Referenzpfad ohne BVH
+mvn compile exec:java -Dpt.bruteForce=true
+# VSync aus; FPS/spp zusätzlich auf stdout
+mvn compile exec:java -Dpt.benchmark=true -Dpt.groupX=16 -Dpt.groupY=8
+# Experimentelle Halbpräzision nur für den Akkumulationspuffer
+mvn compile exec:java -Dpt.half=true
+# Nach acht Frames beenden und auf GL-Fehler prüfen
+mvn compile exec:java -Dpt.smokeFrames=8
+```
+
+Gültig sind 1–8 Bounces, 1–16 Samples/Frame und Workgroups 8×8, 16×8 oder 16×16.
+RGBA16F kann bei vielen Samples durch Quantisierung stagnieren; RGBA32F bleibt Standard.
+Beide Denoiser sind räumlich, ohne Motion Vectors oder zeitliche Reprojektion. Beim
+Bewegen der Kamera beginnt die progressive Mittelung erneut. Glas/Transmission,
+Bildtexturimport, OBJ/glTF-Import und mehrere gesampelte Flächenlichter sind nicht enthalten.
+
+## Datenfluss
+
+Scene/Camera/Mesh → CPU-BVH (binäre 12-Bin-SAH) → SSBO-Upload → Compute-Pathtracing
+mit Primary-Hit-Guides → progressiver HDR-Mittelwert → Denoising → Tonemapping → sRGB.
 
 SSBO-Vertrag (`std430`, native Byte-Reihenfolge):
 
@@ -57,59 +142,48 @@ SSBO-Vertrag (`std430`, native Byte-Reihenfolge):
 |---|---|---|
 | 0 | Vertex: `vec4(position, 0)` | 16 Bytes |
 | 1 | Triangle: `uvec4(a,b,c,material)` | 16 Bytes |
-| 2 | Material: `vec4(baseColor,0)`, `vec4(emission,0)` | 32 Bytes |
+| 2 | Material: `vec4(baseColor,0)`, `vec4(emission,0)`, `vec4(roughness,metallic,texture,scale)` | 48 Bytes |
 | 3 | Node: `vec4(min,0)`, `vec4(max,0)`, `ivec4(left,right,first,count)` | 48 Bytes |
 
-Blätter haben `count > 0`; innere Knoten `count == 0`. Blattbereiche zeigen auf die
-**BVH-sortierten** Dreiecke. Maximale CPU-Baumtiefe 30 passt in den 32er Shader-Stack.
-Parallele Strahlen werden beim AABB-Test explizit behandelt. Der erste Frame liest
-keinen alten/undefinierten Texturinhalt. Image-/Texture-Barrieren synchronisieren Compute und Ausgabe.
+Image-Bindings: 0 HDR-Accumulierung (RGBA32F oder RGBA16F), 1 Normale/Tiefe
+(RGBA32F), 2 Albedo/Material-ID (RGBA16F). Tiefe 0 und Material-ID −1 kennzeichnen
+Himmel. Die Guides entstehen aus einem unverwackelten Primärstrahl pro Pixel.
+Shader und Java-Upload müssen bei Änderungen des Materiallayouts gemeinsam aktualisiert werden.
 
-## Diagnose und Intel-UHD-Messungen
+BVH-Blätter zeigen auf die sortierten Dreiecke. Die maximale Baumtiefe 30 passt
+in den 32er Shader-Stack. Compute und Ausgabe werden über Image-/Texture-Barrieren
+synchronisiert. Nach Reset wird kein undefinierter Akkumulationsinhalt gelesen.
 
-```sh
-# Compute-/Texture-/Ausgabe-Test ohne Traversierung
-mvn compile exec:java -Dpt.gradient=true
-# Referenzpfad für Vergleich mit BVH (langsam)
-mvn compile exec:java -Dpt.bruteForce=true
-# VSync aus, FPS/spp zusätzlich auf stdout
-mvn compile exec:java -Dpt.benchmark=true -Dpt.groupX=16 -Dpt.groupY=8 -Dpt.bounces=4
-# Mehr Rauschreduktion auf einer ausreichend schnellen GPU
-mvn compile exec:java -Dpt.samplesPerFrame=4
-# Auflösungsobergrenze und experimentelles Half-Float
-mvn compile exec:java -Dpt.width=1920 -Dpt.height=1080 -Dpt.half=true
-# Nach 8 Frames beenden; GL-Fehler führen zum Fehlschlag
-mvn compile exec:java -Dpt.smokeFrames=8
-```
+## Tests
 
-Auf derselben GPU mit derselben Szene, Fenstergröße und unbewegter Kamera vergleichen:
-Workgroups 8×8 / 16×8 / 16×16; Obergrenzen 960×540 / 1280×720 / 1920×1080;
-Bounces 1 / 2 / 4 / 8; RGBA32F / RGBA16F. Das Fenster muss groß genug für die
-gewählte interne Auflösung sein. Nach Aufwärmen mindestens 30 Sekunden messen.
-FPS sind End-to-End-Werte, keine isolierten GPU-Zeitmessungen. Hardware, Treiber,
-Auflösung und Parameter zusammen mit dem Ergebnis protokollieren.
-RGBA16F kann durch Quantisierung bei hohen Samplezahlen stagnieren; RGBA32F bleibt Standard.
-Es werden keine ungemessenen Intel-UHD-Frameraten zugesichert.
+`mvn test` führt die eigenständigen CPU-Regressionen aus:
 
-## Tests und bewusst spätere Ausbaustufen
+- `BVHTest`: Blattabdeckung, Bounds, Tiefe, degenerierte Geometrie, leere Szene
+  und 6000 deterministische BVH-/Brute-Force-Strahlvergleiche.
+- `MenuSettingsTest`: Menüaktionen, Denoiser-Auswahl, Reglergrenzen, Tastaturfokus,
+  HiDPI-/Fensterformat-Transformation, Settings-Roundtrip, beschädigte Einstellungen
+  und begehbare Raumgrenzen.
+- `SceneRegressionTest`: übergebenes Brett, Zugfolge, ungültige Züge, Sieg/Neustart,
+  geschlossene und korrekt orientierte Bevel-Geometrie, Indizes sowie identische
+  Fläche von Lichtgeometrie und Lichtsampler.
 
-`mvn test` führt einen CPU-Regressionstest aus: BVH-Blattabdeckung, Bounds, maximale
-Tiefe, degenerierte Geometrie, leere Szene und 6000 deterministische Vergleiche
-von BVH gegen unabhängige Brute-Force-Treffertests. Ein optionaler Linux/EGL-Smoke-Test prüft echte LWJGL-Uploads, Rendering, Reset,
-Resize, endliche/nichtleere Ausgabe und pixelweisen BVH-/Brute-Force-Vergleich:
+Der Linux/EGL-Test prüft tatsächliche Shaderkompilierung und LWJGL-Uploads,
+Accumulation, Reset, Resize, Szenenwechsel, Pausen-Rendering, endliche/nichtleere
+Ausgabe, pixelweisen BVH-/Brute-Force-Vergleich sowie alle sechs
+Format-/Workgroup-Kombinationen. Außerdem werden Denoiserwechsel ohne Sampleverlust,
+Live-Belichtung, Sampling-Reset, Auflösungswechsel und Einfrieren der Pause geprüft.
+`AtrousDenoiserTest` prüft auf der GPU ein deterministisch verrauschtes Bild und
+fordert mindestens 50 % weniger mittleren quadratischen Fehler bei erhaltener
+Materialkante (65×33 prüft auch unvollständige Workgroups):
 
 ```sh
 EGL_PLATFORM=surfaceless mvn test-compile exec:java -Dlwjgl.natives=natives-linux -Dexec.mainClass=de.viergewinnt.renderer.RendererSmokeTest -Dexec.classpathScope=test
 ```
 
-Validierung dieses Stands: Maven `test` erfolgreich; alle Java-Klassen mit `--release 25`
-kompiliert; sechs Compute-Varianten und die Ausgabe-Shader auf Mesa 4.5 kompiliert/gelinkt;
-LWJGL/EGL-Smoke-Test auf llvmpipe erfolgreich. Interaktive Eingabe, Windows-Treiber und
-Intel-UHD-Leistung müssen zusätzlich auf der Zielhardware geprüft werden.
-
-Dieser Stand setzt das im Auftrag priorisierte Zwischenziel um. Noch nicht enthalten:
-OBJ/glTF-Dateiimport (Mesh-Daten lassen sich programmatisch übergeben), separate Kugel-Demo,
-Metal/Glass/PBR-Texturen, Next Event Estimation/MIS, adaptives Sampling, Denoising,
-Motion Vectors und zeitliche Reprojektion. Das Licht wird derzeit durch zufällige
-Pfade getroffen; entsprechend kann die Konvergenz langsam sein. Accumulation mittelt
-bei ruhender Kamera, sie ersetzt keine Reprojektion bei Bewegung.
+Diese Überarbeitung wurde mit ECJ unter Java 17 gegen LWJGL 3.4.3 kompiliert und
+auf Mesa/llvmpipe über EGL geprüft. Die À-Trous-Integration reduzierte im genannten
+synthetischen Test den Rausch-MSE um 99,6 %; das ist kein Qualitätsversprechen für
+beliebige Spielszenen. Raum, Pausenmenü und Grafikseite wurden als tatsächliche
+OpenGL-Ausgaben visuell kontrolliert (1280×720, intern 640×360, 100 spp). Der konfigurierte Maven-/JDK-25-Build,
+interaktive Eingabe, Windows-/HiDPI-Verhalten und Leistung auf echten GPUs müssen
+zusätzlich auf der Zielplattform geprüft werden.

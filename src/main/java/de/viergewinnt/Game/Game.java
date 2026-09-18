@@ -7,11 +7,19 @@ public class Game {
     private Player winner;
     private boolean gameOver;
 
-    public Game() {
-        board = new Board();
-        currentPlayer = Player.Red;
-        winner = null;
-        gameOver = false;
+    public Game() { this(new Board()); }
+
+    public Game(Board initialBoard) {
+        if(initialBoard==null) throw new IllegalArgumentException("Board is required");
+        board=initialBoard;
+        int red=0,blue=0;
+        for(int r=0;r<Board.ROWS;r++) for(int c=0;c<Board.COLUMNS;c++) {
+            if(board.getPiece(r,c)==Player.Red) red++;
+            if(board.getPiece(r,c)==Player.Blue) blue++;
+        }
+        currentPlayer=red<=blue?Player.Red:Player.Blue;
+        winner=board.hasWon(Player.Red)?Player.Red:board.hasWon(Player.Blue)?Player.Blue:null;
+        gameOver=winner!=null||board.isFull();
     }
 
     public boolean play(int column) {
