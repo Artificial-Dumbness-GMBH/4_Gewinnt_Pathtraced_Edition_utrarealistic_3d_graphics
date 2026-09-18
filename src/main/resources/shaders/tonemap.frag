@@ -2,7 +2,9 @@
 in vec2 uv;
 out vec4 color;
 uniform sampler2D image;
-uniform int paused;
+uniform int paused,sampleCount,denoise;
+uniform float aspect;
+uniform sampler2D normalDepth,albedoGuide;
 float luminance(vec3 value) {
     return dot(value,vec3(.2126,.7152,.0722));
 }
@@ -29,29 +31,35 @@ float glyph(vec2 position,vec2 origin,float scale,int code) {
     return float((glyphRow(code,row)>>(4-column))&1);
 }
 void main() {
-    vec2 texel=1.0/vec2(textureSize(image,0));
+    ivec2 size=textureSize(image,0),pixel=clamp(ivec2(uv*vec2(size)),ivec2(0),size-1);
     vec3 center=texture(image,uv).rgb;
-    float centerLuminance=luminance(center);
+    vec4 geometry=texelFetch(normalDepth,pixel,0),albedo=texelFetch(albedoGuide,pixel,0);
     vec3 filtered=vec3(0);float totalWeight=0;
-    float edgeSigma=.055+.16*sqrt(max(centerLuminance,0));
-    for(int offsetY=-1;offsetY<=1;offsetY++) for(int offsetX=-1;offsetX<=1;offsetX++) {
-        vec3 neighbor=texture(image,uv+vec2(offsetX,offsetY)*texel).rgb;
-        float radiusSquared=float(offsetX*offsetX+offsetY*offsetY);
-        float spatialWeight=exp(-radiusSquared*1.0);
-        float luminanceDifference=abs(luminance(neighbor)-centerLuminance);
-        float edgeWeight=exp(-(luminanceDifference*luminanceDifference)/(edgeSigma*edgeSigma));
-        float weight=spatialWeight*edgeWeight;
+    float sigma=.12+.45*sqrt(max(luminance(center),0));
+    for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++) {
+        ivec2 q=clamp(pixel+ivec2(x,y),ivec2(0),size-1);
+        vec4 g=texelFetch(normalDepth,q,0),a=texelFetch(albedoGuide,q,0);
+        if(a.a!=albedo.a) continue;
+        float normalWeight=geometry.w==0?1:pow(max(dot(geometry.xyz,g.xyz),0),64);
+        float depthWeight=exp(-abs(g.w-geometry.w)/max(.015,.015*geometry.w));
+        vec3 delta=a.rgb-albedo.rgb;
+        float albedoWeight=exp(-dot(delta,delta)*80);
+        vec3 neighbor=texelFetch(image,q,0).rgb;
+        float difference=luminance(neighbor)-luminance(center);
+        float weight=exp(-float(x*x+y*y)*.4-difference*difference/(sigma*sigma))*normalWeight*depthWeight*albedoWeight;
         filtered+=neighbor*weight;totalWeight+=weight;
     }
-    vec3 denoised=filtered/max(totalWeight,.001);
-    vec3 hdr=max(mix(denoised,center,.3),vec3(0));
-    vec3 mapped=hdr/(vec3(1)+hdr);
+    // Fade filtering as convergence improves so fine grain is retained.
+    float strength=denoise==0?0:.85/(1+float(sampleCount)*.015);
+    vec3 hdr=max(mix(center,filtered/max(totalWeight,1e-8),strength),vec3(0));
+    // Filmic highlight shoulder, applied exactly once in linear light.
+    vec3 mapped=clamp((hdr*(2.51*hdr+.03))/(hdr*(2.43*hdr+.59)+.14),0,1);
     // Explicit linear -> sRGB; framebuffer sRGB conversion is disabled.
     vec3 srgb=mix(12.92*mapped,1.055*pow(mapped,vec3(1.0/2.4))-.055,step(vec3(.0031308),mapped));
     if(paused!=0) {
         srgb*=.32;
-        vec2 p=vec2((uv.x-.5)*1.7778,uv.y-.5);
-        float panel=step(-.36,p.x)*step(p.x,.36)*step(-.35,p.y)*step(p.y,.32);
+        vec2 p=vec2((uv.x-.5)*aspect,uv.y-.5);
+        float panel=step(-.36,p.x)*step(p.x,.36)*step(-.40,p.y)*step(p.y,.32);
         float header=step(-.36,p.x)*step(p.x,.36)*step(.19,p.y)*step(p.y,.30);
         float firstButton=step(-.28,p.x)*step(p.x,.28)*step(-.16,p.y)*step(p.y,-.06);
         float secondButton=step(-.28,p.x)*step(p.x,.28)*step(-.27,p.y)*step(p.y,-.17);

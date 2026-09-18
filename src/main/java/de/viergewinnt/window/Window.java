@@ -21,6 +21,7 @@ import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
 import static org.lwjgl.glfw.GLFW.glfwGetCursorPos;
 import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwGetMouseButton;
 import static org.lwjgl.glfw.GLFW.glfwGetTime;
 import static org.lwjgl.glfw.GLFW.glfwInit;
@@ -85,8 +86,8 @@ public class Window {
             glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
             Camera camera=new Camera();
             boolean[] dropKeys=new boolean[Board.COLUMNS];
-            Game game = new Game();
-            int[] width=new int[1],height=new int[1];double last=glfwGetTime(),titleTime=last;int frames=0;
+            Game game = new Game(board);
+            int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];double last=glfwGetTime(),titleTime=last;int frames=0;
             int smokeFrames=Integer.getInteger("pt.smokeFrames",0),totalFrames=0;
             boolean paused=false;
             boolean escapeHeld=false;
@@ -94,6 +95,7 @@ public class Window {
             try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()))) {
                 while(!glfwWindowShouldClose(window)) {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
+                    glfwGetWindowSize(window,windowWidth,windowHeight);
                     boolean escapePressed=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
                     if(escapePressed && !escapeHeld) {
                         paused = !paused;
@@ -101,8 +103,8 @@ public class Window {
                             glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
                         } else {
                             glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
-                            glfwSetCursorPos(window, width[0] / 2.0, height[0] / 2.0);
-                            camera.resetMouseCursor(width[0] / 2.0, height[0] / 2.0);
+                            glfwSetCursorPos(window, windowWidth[0] / 2.0, windowHeight[0] / 2.0);
+                            camera.resetMouseCursor(windowWidth[0] / 2.0, windowHeight[0] / 2.0);
                         }
                     }
                     escapeHeld=escapePressed;
@@ -122,21 +124,22 @@ public class Window {
                     }
 
                     glfwGetFramebufferSize(window,width,height);
-                    if(width[0]<=0||height[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
+                    if(width[0]<=0||height[0]<=0||windowWidth[0]<=0||windowHeight[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
                     boolean mousePressed=glfwGetMouseButton(window,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
                     if(paused&&mousePressed&&!mouseHeld) {
                         double[] cursorX=new double[1],cursorY=new double[1];
                         glfwGetCursorPos(window,cursorX,cursorY);
-                        double normalizedX=cursorX[0]/width[0],normalizedY=1.0-cursorY[0]/height[0];
-                        double menuX=(normalizedX-.5)*1.7778,menuY=normalizedY-.5;
+                        double normalizedX=cursorX[0]/windowWidth[0],normalizedY=1.0-cursorY[0]/windowHeight[0];
+                        double menuX=(normalizedX-.5)*((double)width[0]/height[0]),menuY=normalizedY-.5;
                         if(menuX>=-.28&&menuX<=.28&&menuY>=-.16&&menuY<=-.06) {
                             paused=false;
                             glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
-                            glfwSetCursorPos(window,width[0]/2.0,height[0]/2.0);
-                            camera.resetMouseCursor(width[0]/2.0,height[0]/2.0);
+                            glfwSetCursorPos(window,windowWidth[0]/2.0,windowHeight[0]/2.0);
+                            camera.resetMouseCursor(windowWidth[0]/2.0,windowHeight[0]/2.0);
                         } else if(menuX>=-.28&&menuX<=.28&&menuY>=-.27&&menuY<=-.17) {
                             game.reset();
                             tracer.setScene(Scene.fromBoard(game.getBoard()));
+                            tracer.render(camera,width[0],height[0]);
                         } else if(menuX>=-.28&&menuX<=.28&&menuY>=-.38&&menuY<=-.28) {
                             glfwSetWindowShouldClose(window,true);
                         }
@@ -152,7 +155,7 @@ public class Window {
                         String state = paused ? "PAUSE" : HUD.getStatusText(game);
                         String title=paused
                             ? String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | PAUSE",frames/(now-titleTime),tracer.samples())
-                            : String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | WASD + rechte Maus | Tasten 1-7",frames/(now-titleTime),tracer.samples(),state);
+                            : String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | WASD + Maus | Tasten 1-7",frames/(now-titleTime),tracer.samples(),state);
                         glfwSetWindowTitle(window,title);
                         if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
                         frames=0;titleTime=now;

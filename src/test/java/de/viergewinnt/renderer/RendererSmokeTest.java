@@ -2,7 +2,6 @@ package de.viergewinnt.renderer;
 
 import de.viergewinnt.Game.*;
 import de.viergewinnt.scene.*;
-import de.viergewinnt.renderer.*;
 import org.lwjgl.glfw.*;
 import org.lwjgl.opengl.*;
 import static org.lwjgl.glfw.GLFW.*;
@@ -21,16 +20,28 @@ public class RendererSmokeTest {
   Board board=new Board();board.dropPiece(0,Player.Red);
   try(PathTracer pt=new PathTracer(Scene.fromBoard(board))) {
    Camera c=new Camera();pt.render(c,96,54);pt.render(c,96,54);
-   if(pt.samples()!=2) throw new AssertionError("accumulation");
-   pt.reset();pt.render(c,96,54);if(pt.samples()!=1) throw new AssertionError("reset");
-   pt.render(c,80,50);if(pt.samples()!=1) throw new AssertionError("resize");
+   if(pt.samples()!=2*Integer.getInteger("pt.samplesPerFrame",4)) throw new AssertionError("accumulation");
+   pt.reset();pt.render(c,96,54);if(pt.samples()!=Integer.getInteger("pt.samplesPerFrame",4)) throw new AssertionError("reset");
+   pt.render(c,80,50);if(pt.samples()!=Integer.getInteger("pt.samplesPerFrame",4)) throw new AssertionError("resize");
    board.dropPiece(1,Player.Blue);pt.setScene(Scene.fromBoard(board));pt.render(c,80,50);
-   if(pt.samples()!=1) throw new AssertionError("scene reset");
+   if(pt.samples()!=Integer.getInteger("pt.samplesPerFrame",4)) throw new AssertionError("scene reset");
+   pt.renderPauseOverlay(80,50);
+   pt.render(c,80,50);
    glFinish();int error=glGetError();if(error!=0) throw new AssertionError("GL error "+error);
    float[] pixels=new float[80*50*4];glReadPixels(0,0,80,50,GL_RGBA,GL_FLOAT,pixels);
    float min=1,max=0;
    for(int i=0;i<pixels.length;i+=4) {float v=pixels[i];if(!Float.isFinite(v)) throw new AssertionError("nonfinite");min=Math.min(min,v);max=Math.max(max,v);}
    if(max-min<.01) throw new AssertionError("blank image");
+   glActiveTexture(GL_TEXTURE1);
+   float[] guides=new float[80*50*4];glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,guides);
+   for(int i=0;i<guides.length;i+=4) {
+    for(int j=0;j<4;j++) if(!Float.isFinite(guides[i+j])) throw new AssertionError("nonfinite guide");
+    if(guides[i+3]>0) {
+     float length=guides[i]*guides[i]+guides[i+1]*guides[i+1]+guides[i+2]*guides[i+2];
+     if(Math.abs(length-1)>1e-4) throw new AssertionError("guide normal is not normalized");
+    }
+   }
+   glActiveTexture(GL_TEXTURE0);
    System.out.println("GPU smoke passed: "+glGetString(GL_RENDERER)+", output range "+min+".."+max);
   }
   float[][] reference=new float[2][];
@@ -47,6 +58,16 @@ public class RendererSmokeTest {
     throw new AssertionError("BVH/brute-force shader mismatch at "+i);
   }
   System.out.println("GPU BVH/brute-force image comparison passed");
+  System.clearProperty("pt.bruteForce");
+  for(boolean half:new boolean[]{false,true}) for(int[] group:new int[][]{{8,8},{16,8},{16,16}}) {
+   System.setProperty("pt.half",Boolean.toString(half));
+   System.setProperty("pt.groupX",Integer.toString(group[0]));System.setProperty("pt.groupY",Integer.toString(group[1]));
+   try(PathTracer pt=new PathTracer(Scene.fromBoard(board))) {
+    pt.render(new Camera(),83,47);glFinish();
+    if(glGetError()!=GL_NO_ERROR) throw new AssertionError("format/workgroup variant");
+   }
+  }
+  System.out.println("Six format/workgroup variants passed");
   glfwDestroyWindow(window);glfwTerminate();
  }
 }

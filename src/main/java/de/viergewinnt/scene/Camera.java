@@ -9,9 +9,10 @@ import static org.lwjgl.glfw.GLFW.glfwGetCursorPos;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
 
 public final class Camera {
-    private Vec3 position=new Vec3(0,3,12);
-    private float yaw=-90,pitch=0;
+    private Vec3 position=new Vec3(5,3.8f,12);
+    private float yaw=-112.62f,pitch=-3.52f;
     private double lastX,lastY;
+    private boolean mouseInitialized;
     public Vec3 position() { return position; }
     public Vec3 forward() {
         double y=Math.toRadians(yaw),p=Math.toRadians(pitch);
@@ -20,12 +21,13 @@ public final class Camera {
     public Vec3 right() { return forward().cross(new Vec3(0,1,0)).normalized(); }
     public Vec3 up() { return right().cross(forward()).normalized(); }
     public void resetMouseCursor(double centerX,double centerY) {
-        lastX=centerX;lastY=centerY;
+        lastX=centerX;lastY=centerY;mouseInitialized=true;
     }
     /** Mouse look is active whenever the cursor is captured; no right-click is required. */
     public boolean update(long window,float dt) {
         boolean changed=false;
         double[] x=new double[1],y=new double[1];glfwGetCursorPos(window,x,y);
+        if(!mouseInitialized) resetMouseCursor(x[0],y[0]);
         if(x[0]!=lastX||y[0]!=lastY) {
             yaw+=(float)(x[0]-lastX)*.12f;pitch=Math.max(-89,Math.min(89,pitch-(float)(y[0]-lastY)*.12f));changed=true;
         }
@@ -37,7 +39,7 @@ public final class Camera {
         if(glfwGetKey(window,GLFW_KEY_S)==GLFW_PRESS) move=move.sub(horizontalForward);
         if(glfwGetKey(window,GLFW_KEY_D)==GLFW_PRESS) move=move.add(horizontalRight);
         if(glfwGetKey(window,GLFW_KEY_A)==GLFW_PRESS) move=move.sub(horizontalRight);
-        if(move.dot(move)>0) { position=position.add(move.normalized().mul(5*Math.min(dt,.1f)));position=new Vec3(position.x,3,position.z);changed=true; }
+        if(move.dot(move)>0) { position=position.add(move.normalized().mul(5*Math.min(dt,.1f)));changed=true; }
         return changed;
     }
 }
