@@ -22,10 +22,16 @@ mvn compile exec:java -Dlwjgl.natives=natives-linux
 ```
 
 WASD bewegt die Kamera, die eingefangene Maus dreht sie ohne zusätzliche Maustaste.
-Tasten 1–7 werfen abwechselnd rote/blaue Steine ein. Siege und Unentschieden
+Tasten 1–7 werfen abwechselnd rote/blaue Steine ein. Die zugehörigen Nummern stehen
+direkt auf der oberen Leiste an jedem Einwurfschacht, von beiden Brettseiten lesbar.
+Die Nummern werden in Fensterauflösung gezeichnet und bleiben auch bei 70p erkennbar.
+
+Siege und Unentschieden
 beenden die Eingabe. Escape öffnet/schließt das Pausenmenü mit Weiter, Neustart
 und Beenden. `Window.create(Board)` übernimmt das übergebene Brett einschließlich
 Zugfolge und eines bereits bestehenden Gewinners; `create()` startet leer.
+
+![Tastennummern an den Einwurfschächten](docs/column-keys.jpg)
 
 Unter Windows bei Bedarf `java.exe`/`javaw.exe` unter Einstellungen → System →
 Anzeige → Grafik auf **Hohe Leistung** setzen. Der verwendete OpenGL-Renderer
