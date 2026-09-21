@@ -2,10 +2,11 @@ package de.viergewinnt.bvh;
 
 import de.viergewinnt.scene.Vec3;
 
-/** std430: vec4 min, vec4 max, ivec4(left,right,first,count), 48 bytes. */
+/** std430: vec4(min.xyz,moving), vec4 max, ivec4(left,right,first,count), 48 bytes. */
 public final class BVHNode {
     public Vec3 min=new Vec3(Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY,Float.POSITIVE_INFINITY);
     public Vec3 max=new Vec3(Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY,Float.NEGATIVE_INFINITY);
+    public boolean moving;
     public int left=-1,right=-1,first,count;
     void include(Vec3 v) {
         min=new Vec3(Math.min(min.x,v.x),Math.min(min.y,v.y),Math.min(min.z,v.z));
