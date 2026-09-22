@@ -1,13 +1,20 @@
 package de.viergewinnt.window;
 
 import org.lwjgl.glfw.Callbacks;
+import static org.lwjgl.glfw.GLFW.GLFW_CLIENT_API;
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MAJOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MINOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_NORMAL;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_TAB;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_UP;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_NO_API;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_CORE_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_DEBUG_CONTEXT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_FORWARD_COMPAT;
@@ -21,9 +28,9 @@ import static org.lwjgl.glfw.GLFW.glfwDestroyWindow;
 import static org.lwjgl.glfw.GLFW.glfwGetCursorPos;
 import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
-import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwGetMouseButton;
 import static org.lwjgl.glfw.GLFW.glfwGetTime;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwInit;
 import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
 import static org.lwjgl.glfw.GLFW.glfwPollEvents;
@@ -39,6 +46,7 @@ import static org.lwjgl.glfw.GLFW.glfwWaitEventsTimeout;
 import static org.lwjgl.glfw.GLFW.glfwWindowHint;
 import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import static org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window;
 import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL11.GL_NO_ERROR;
 import static org.lwjgl.opengl.GL11.GL_RENDERER;
@@ -48,23 +56,19 @@ import static org.lwjgl.opengl.GL11.glGetError;
 import static org.lwjgl.opengl.GL11.glGetString;
 
 import de.viergewinnt.Game.Board;
-import de.viergewinnt.Game.Game;
 import de.viergewinnt.Game.DropAnimation;
+import de.viergewinnt.Game.Game;
 import de.viergewinnt.hud.HUD;
 import de.viergewinnt.hud.HologramRenderer;
 import de.viergewinnt.input.Input;
+import de.viergewinnt.renderer.DirectX12Backend;
 import de.viergewinnt.renderer.PathTracer;
-import de.viergewinnt.scene.Camera;
-import de.viergewinnt.scene.Scene;
 import de.viergewinnt.renderer.RenderSettings;
 import de.viergewinnt.renderer.SettingsStore;
-import de.viergewinnt.ui.PauseMenu;
+import de.viergewinnt.scene.Camera;
+import de.viergewinnt.scene.Scene;
 import de.viergewinnt.ui.MenuRenderer;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_TAB;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_UP;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN;
-import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+import de.viergewinnt.ui.PauseMenu;
 
 public class Window {
     private long window;
@@ -75,6 +79,14 @@ public class Window {
         glfwSetErrorCallback(error);
         try {
             if(!glfwInit()) throw new IllegalStateException("GLFW konnte nicht initialisiert werden.");
+            if("dx12".equalsIgnoreCase(System.getProperty("pt.backend","opengl"))) {
+                try {
+                    createDirectX12();
+                    return;
+                } catch(RuntimeException|UnsatisfiedLinkError e) {
+                    System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
+                }
+            }
             glfwDefaultWindowHints();
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,4);glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,6);
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT,GLFW_TRUE);
@@ -175,6 +187,33 @@ public class Window {
         } finally {
             if(window!=0) { Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0; }
             GL.setCapabilities(null);glfwTerminate();glfwSetErrorCallback(null);error.free();
+        }
+    }
+
+    private void createDirectX12() {
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);glfwWindowHint(GLFW_RESIZABLE,GLFW_TRUE);
+        window=glfwCreateWindow(1280,720,"4 Gewinnt - DirectX 12",0,0);
+        if(window==0) throw new IllegalStateException("DX12-Fenster konnte nicht erstellt werden.");
+        long nativeWindow=glfwGetWin32Window(window);
+        if(nativeWindow==0) throw new IllegalStateException("Win32-Fensterhandle konnte nicht ermittelt werden.");
+        try(DirectX12Backend backend=new DirectX12Backend()) {
+            System.out.println("DX12 GPU: "+backend.adapterName()+" | DXR: "+backend.raytracingSupported());
+            int[] width=new int[1],height=new int[1];
+            glfwGetFramebufferSize(window,width,height);
+            backend.attachWindow(nativeWindow,Math.max(1,width[0]),Math.max(1,height[0]));
+            int lastWidth=width[0],lastHeight=height[0];
+            int smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",0),frames=0;
+            while(!glfwWindowShouldClose(window)) {
+                glfwPollEvents();glfwGetFramebufferSize(window,width,height);
+                if(width[0]>0&&height[0]>0) {
+                    if(width[0]!=lastWidth||height[0]!=lastHeight) {
+                        backend.resize(width[0],height[0]);lastWidth=width[0];lastHeight=height[0];
+                    }
+                    backend.clear(.025f,.08f,.16f,1f);backend.present();
+                    if(smokeFrames>0&&++frames>=smokeFrames) glfwSetWindowShouldClose(window,true);
+                }
+            }
         }
     }
     private boolean triggered(int key,boolean[] held,int slot) {

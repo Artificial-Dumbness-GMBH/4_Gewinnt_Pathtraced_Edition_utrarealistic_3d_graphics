@@ -7,7 +7,7 @@ public record RenderSettings(Denoiser denoiser,int bounces,int samplesPerFrame,
         int maxWidth,int maxHeight,float denoiseStrength,float exposure,boolean taa) {
     public enum Denoiser { OFF, OWN, ATROUS }
     public RenderSettings {
-        if(denoiser==null||bounces<1||bounces>8||samplesPerFrame<1||samplesPerFrame>16
+        if(denoiser==null||bounces<1||bounces>12||samplesPerFrame<1||samplesPerFrame>16
                 ||maxWidth<64||maxWidth>3840||maxHeight<64||maxHeight>2160
                 ||!Float.isFinite(denoiseStrength)||denoiseStrength<.25f||denoiseStrength>2
                 ||!Float.isFinite(exposure)||exposure<.25f||exposure>3)
