@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
+#include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
 #include <jni.h>
 #include <wrl.h>
@@ -155,9 +156,14 @@ static void pipelines(Backend& b) {
     gp.NumRenderTargets=1;gp.RTVFormats[0]=DXGI_FORMAT_R8G8B8A8_UNORM;gp.SampleDesc.Count=1;
     check(b.device->CreateGraphicsPipelineState(&gp,IID_PPV_ARGS(&b.displayPipeline)),"Create display pipeline");
 }
-static void initialize(Backend& b) {
+static void initialize(Backend& b,bool warp) {
+    if(warp) {ComPtr<ID3D12Debug> debug;if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) debug->EnableDebugLayer();}
     ComPtr<IDXGIFactory6> factory;check(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)),"Create DXGI factory");
-    for(UINT i=0;;i++) {
+    if(warp) {
+        check(factory->EnumWarpAdapter(IID_PPV_ARGS(&b.adapter)),"Create explicit WARP test adapter");
+        check(D3D12CreateDevice(b.adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&b.device)),"Create WARP test device");
+    }
+    for(UINT i=0;!b.device;i++) {
         ComPtr<IDXGIAdapter1> candidate;
         HRESULT hr=factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&candidate));
         if(hr==DXGI_ERROR_NOT_FOUND) break;check(hr,"Enumerate GPU");
@@ -183,8 +189,8 @@ static void initialize(Backend& b) {
     pipelines(b);
 }
 #define JNI_NAME(name) Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_##name
-extern "C" JNIEXPORT jlong JNICALL JNI_NAME(create)(JNIEnv* env,jclass) {
-    try {auto b=std::make_unique<Backend>();initialize(*b);return reinterpret_cast<jlong>(b.release());}catch(const std::exception& e){fail(env,e);return 0;}
+extern "C" JNIEXPORT jlong JNICALL JNI_NAME(create)(JNIEnv* env,jclass,jboolean warp) {
+    try {auto b=std::make_unique<Backend>();initialize(*b,warp);return reinterpret_cast<jlong>(b.release());}catch(const std::exception& e){fail(env,e);return 0;}
 }
 extern "C" JNIEXPORT void JNICALL JNI_NAME(destroy)(JNIEnv*,jclass,jlong h) {delete reinterpret_cast<Backend*>(h);}
 extern "C" JNIEXPORT jstring JNICALL JNI_NAME(adapterName)(JNIEnv* env,jclass,jlong h) {
@@ -294,5 +300,41 @@ extern "C" JNIEXPORT void JNICALL JNI_NAME(render)(JNIEnv* env,jclass,jlong h,jf
         std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);b.cmd->ResourceBarrier(1,&barrier);
         check(b.cmd->Close(),"Close frame");ID3D12CommandList* lists[]={b.cmd.Get()};b.queue->ExecuteCommandLists(1,lists);
         check(b.swap->Present(vsync?1:0,0),"Present");b.historyReset=false;b.frame.frame++;b.frame.sequence++;
+    }catch(const std::exception& e){fail(env,e);}
+}
+
+// Explicit smoke-test readback: check actual compute output, not just successful Present.
+extern "C" JNIEXPORT void JNICALL JNI_NAME(validateFrame)(JNIEnv* env,jclass,jlong h) {
+    try {
+        auto& b=backend(h);b.wait();
+        auto desc=b.color.resource->GetDesc();D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};UINT64 bytes=0;
+        b.device->GetCopyableFootprints(&desc,0,1,0,&footprint,nullptr,nullptr,&bytes);
+        D3D12_HEAP_PROPERTIES hp{};hp.Type=D3D12_HEAP_TYPE_READBACK;
+        D3D12_RESOURCE_DESC rd{};rd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;rd.Width=bytes;rd.Height=1;rd.DepthOrArraySize=1;
+        rd.MipLevels=1;rd.SampleDesc.Count=1;rd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        ComPtr<ID3D12Resource> readback;
+        check(b.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&rd,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&readback)),"Create smoke readback");
+        check(b.allocator->Reset(),"Reset readback allocator");check(b.cmd->Reset(b.allocator.Get(),nullptr),"Reset readback commands");
+        auto before=b.color.state;b.transition(b.color,D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_TEXTURE_COPY_LOCATION src{},dst{};src.pResource=b.color.resource.Get();src.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst.pResource=readback.Get();dst.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;dst.PlacedFootprint=footprint;
+        b.cmd->CopyTextureRegion(&dst,0,0,0,&src,nullptr);b.transition(b.color,before);
+        check(b.cmd->Close(),"Close readback");ID3D12CommandList* lists[]={b.cmd.Get()};b.queue->ExecuteCommandLists(1,lists);b.wait();
+        void* mapped=nullptr;D3D12_RANGE range{0,SIZE_T(bytes)};check(readback->Map(0,&range,&mapped),"Map readback");
+        bool finite=true;float minimum=1e30f,maximum=0;
+        for(UINT y=0;y<b.frame.height;y++) {
+            auto row=reinterpret_cast<const float*>(static_cast<const char*>(mapped)+footprint.Offset+y*footprint.Footprint.RowPitch);
+            for(UINT x=0;x<b.frame.width;x++) for(UINT c=0;c<3;c++) {float v=row[x*4+c];finite&=std::isfinite(v)&&v>=0;minimum=std::min(minimum,v);maximum=std::max(maximum,v);}
+        }
+        D3D12_RANGE noWrite{0,0};readback->Unmap(0,&noWrite);
+        if(!finite||maximum<=0||maximum-minimum<1e-6f) throw std::runtime_error("DX12 smoke image is invalid, empty or constant");
+        ComPtr<ID3D12InfoQueue> info;
+        if(SUCCEEDED(b.device.As(&info))) {
+            for(UINT64 i=0;i<info->GetNumStoredMessagesAllowedByRetrievalFilter();i++) {
+                SIZE_T size=0;check(info->GetMessage(i,nullptr,&size),"Debug message size");std::vector<char> memory(size);
+                auto message=reinterpret_cast<D3D12_MESSAGE*>(memory.data());check(info->GetMessage(i,message,&size),"Debug message");
+                if(message->Severity<=D3D12_MESSAGE_SEVERITY_ERROR) throw std::runtime_error(std::string("D3D12 validation: ")+message->pDescription);
+            }
+        }
     }catch(const std::exception& e){fail(env,e);}
 }

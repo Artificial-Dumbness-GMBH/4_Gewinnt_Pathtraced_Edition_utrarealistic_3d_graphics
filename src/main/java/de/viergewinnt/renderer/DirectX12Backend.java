@@ -18,7 +18,7 @@ public final class DirectX12Backend implements AutoCloseable {
         this.settings=settings;
         if(!System.getProperty("os.name","").toLowerCase(Locale.ROOT).startsWith("windows"))
             throw new UnsupportedOperationException("DirectX 12 benötigt Windows.");
-        Native.load();handle=Native.create();
+        Native.load();handle=Native.create(Boolean.getBoolean("pt.dx12.warp"));
         if(handle==0) throw new IllegalStateException("DirectX 12 konnte nicht initialisiert werden.");
     }
     public static boolean available() {
@@ -62,6 +62,7 @@ public final class DirectX12Backend implements AutoCloseable {
         Native.render(handle,cameraData,lift,settings.samplesPerFrame(),settings.bounces(),settings.exposure(),settings.denoiseStrength(),
             settings.denoiser()!=RenderSettings.Denoiser.OFF,dt*1000,reset,!Boolean.getBoolean("pt.benchmark"));
     }
+    public void validateFrame() {checkAttached();Native.validateFrame(handle);}
     private void checkOpen() { if(handle==0) throw new IllegalStateException("DirectX 12 Backend ist geschlossen."); }
     private void checkAttached() {checkOpen();if(!attached) throw new IllegalStateException("Kein DX12-Fenster verbunden.");}
     @Override public void close() {if(handle!=0) {Native.destroy(handle);handle=0;attached=false;}}
@@ -71,7 +72,8 @@ public final class DirectX12Backend implements AutoCloseable {
             if(!loaded) {String explicit=System.getProperty("pt.dx12.library","");
                 if(explicit.isBlank()) System.loadLibrary("viergewinnt_dx12");else System.load(Path.of(explicit).toAbsolutePath().toString());loaded=true;}
         }
-        private static native long create();
+        private static native long create(boolean warp);
+        private static native void validateFrame(long h);
         private static native void destroy(long h);
         private static native String adapterName(long h);
         private static native String upscalerName(long h);

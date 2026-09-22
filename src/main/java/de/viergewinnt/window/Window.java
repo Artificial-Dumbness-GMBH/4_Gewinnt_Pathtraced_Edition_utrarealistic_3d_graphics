@@ -236,7 +236,7 @@ public class Window {
                     }
                     backend.render(camera,drop.active()?drop.lift():0,dt,false);
                     glfwSetWindowTitle(window,"4 Gewinnt | DX12 | "+backend.upscalerName()+" | "+(paused?"PAUSE · ESC weiter · R neu · Q Ende":HUD.getStatusText(game)));
-                    if(smokeFrames>0&&++frames>=smokeFrames) break;
+                    if(smokeFrames>0&&++frames>=smokeFrames) {backend.validateFrame();System.out.println("DX12 smoke passed: finite, nonempty, nonconstant HDR output.");break;}
                 }
             }
         } finally {

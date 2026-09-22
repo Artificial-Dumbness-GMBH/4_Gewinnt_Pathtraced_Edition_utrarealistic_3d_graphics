@@ -33,3 +33,5 @@ jobs:
         run: cmake --build target/dx12 --config Release
       - name: Compile all HLSL entry points
         run: ctest --test-dir target/dx12 -C Release --output-on-failure
+      - name: Execute DX12 pathtracing on WARP and validate GPU readback
+        run: mvn --batch-mode compile exec:java "-Dpt.backend=dx12" "-Dpt.dx12.strict=true" "-Dpt.dx12.warp=true" "-Dpt.dx12.library=target/dx12/Release/viergewinnt_dx12.dll" "-Dpt.dx12SmokeFrames=2" "-Dpt.width=64" "-Dpt.height=64" "-Dpt.bounces=1" "-Dpt.samplesPerFrame=1"
