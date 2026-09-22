@@ -24,7 +24,7 @@ cbuffer Frame : register(b0) {
 static const float3 lightPosition=float3(0,13.8,0),lightSize=float3(6,0,5),lightRadiance=float3(18,17.2,16);
 static const int lightMaterial=4,bruteForce=0,gradient=0;
 #define movingOffset float3(0,movingLift,0)
-const float PI=3.14159265359;
+static const float PI=3.14159265359;
 static uint rng;
 float randomFloat() {
     rng=rng*747796405u+2891336453u;
@@ -137,10 +137,6 @@ float masking(float nv,float roughness) {
     return 2*nv/max(nv+sqrt(a*a+(1-a*a)*nv*nv),1e-7);
 }
 float specularChance(float metallic) { return lerp(.35,.9,metallic); }
-    return a*b+c; // NV_gpu_shader5 guarantees half arithmetic, not a half FMA overload.
-
-}
-#endif
 float3 brdf(float3 n,float3 v,float3 l,float3 base,float roughness,float metallic,out float pdf) {
     float nv=max(dot(n,v),0),nl=max(dot(n,l),0);pdf=0;
     if(nv<=0||nl<=0||dot(v+l,v+l)<1e-10) return ((float3)(0));
@@ -160,18 +156,18 @@ float3 sampleDirection(float3 n,float3 v,float roughness,float metallic) {
     float3 h=normalize(t*(st*cos(phi))+cross(n,t)*(st*sin(phi))+n*ct);
     return reflect(-v,h);
 }
-float lightPdf(float3 from,float3 point,float3 direction) {
+float lightPdf(float3 from,float3 surfacePoint,float3 direction) {
     float lightCosine=max(direction.y,0);
-    return lightCosine>0?dot(point-from,point-from)/(4*lightSize.x*lightSize.z*lightCosine):0;
+    return lightCosine>0?dot(surfacePoint-from,surfacePoint-from)/(4*lightSize.x*lightSize.z*lightCosine):0;
 }
 float powerWeight(float a,float b) { return a*a/max(a*a+b*b,1e-20); }
-float3 directLight(float3 point,float3 n,float3 v,float3 base,float roughness,float metallic,bool lastBounce) {
+float3 directLight(float3 surfacePoint,float3 n,float3 v,float3 base,float roughness,float metallic,bool lastBounce) {
     float3 target=lightPosition+float3((2*randomFloat()-1)*lightSize.x,0,(2*randomFloat()-1)*lightSize.z);
-    float3 delta=target-point;float distanceToLight=length(delta);float3 l=delta/distanceToLight;
+    float3 delta=target-surfacePoint;float distanceToLight=length(delta);float3 l=delta/distanceToLight;
     if(dot(n,l)<=0||l.y<=0) return ((float3)(0));
-    if(occluded(point+n*.001,l,distanceToLight-.003)) return ((float3)(0));
+    if(occluded(surfacePoint+n*.001,l,distanceToLight-.003)) return ((float3)(0));
     float pdf;float3 f=brdf(n,v,l,base,roughness,metallic,pdf);
-    float lp=lightPdf(point,target,l);
+    float lp=lightPdf(surfacePoint,target,l);
     // No BSDF continuation at the last bounce, so there is no competing estimator.
     return lightRadiance*f*max(dot(n,l),0)*(lastBounce?1:powerWeight(lp,pdf))/max(lp,1e-7);
 }
@@ -183,18 +179,18 @@ float3 trace(float3 origin,float3 direction) {
         if(hit<0) {
             radiance+=throughput*lerp(float3(.035,.045,.07),float3(.22,.30,.45),clamp(direction.y*.5+.5,0,1));break;
         }
-        float3 point=origin+direction*distance;
+        float3 surfacePoint=origin+direction*distance;
         uint materialIndex=triangles[hit].w;Material m=materials[materialIndex];
         if(any(m.emission.rgb>0)) {
             float weight=1;
             if(materialIndex==uint(lightMaterial)) {
                 if(direction.y<=0) break;
-                if(bounce>0) weight=powerWeight(previousPdf,lightPdf(previousPoint,point,direction));
+                if(bounce>0) weight=powerWeight(previousPdf,lightPdf(previousPoint,surfacePoint,direction));
             }
             radiance+=throughput*m.emission.rgb*weight;break;
         }
-        float roughness;float3 base=surfaceColor(m,point,roughness),view=-direction;
-        radiance+=throughput*directLight(point,normal,view,base,roughness,m.surface.y,bounce==maxBounces-1);
+        float roughness;float3 base=surfaceColor(m,surfacePoint,roughness),view=-direction;
+        radiance+=throughput*directLight(surfacePoint,normal,view,base,roughness,m.surface.y,bounce==maxBounces-1);
         if(bounce==maxBounces-1) break;
         float3 next=sampleDirection(normal,view,roughness,m.surface.y);
         float pdf;float3 f=brdf(normal,view,next,base,roughness,m.surface.y,pdf);
@@ -202,8 +198,8 @@ float3 trace(float3 origin,float3 direction) {
         throughput*=f*max(dot(normal,next),0)/pdf;
         if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
         // Fixed bounce budget: no roulette probability to fold into MIS densities.
-        previousPoint=point;previousPdf=pdf;
-        origin=point+normal*.001;direction=next;
+        previousPoint=surfacePoint;previousPdf=pdf;
+        origin=surfacePoint+normal*.001;direction=next;
     }
     return radiance;
 }
@@ -220,13 +216,13 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 normal; float distance;
     float3 ray=cameraRay(float2(pixel)+.5+jitter);
     int hit=intersectScene(cameraPosition,ray,distance,normal);
-    float3 point=cameraPosition+ray*(hit>=0?distance:1000);
-    float z=dot(point-cameraPosition,cameraForward);
+    float3 surfacePoint=cameraPosition+ray*(hit>=0?distance:1000);
+    float z=dot(surfacePoint-cameraPosition,cameraForward);
     deviceDepth[pixel]=hit>=0?saturate(1000.0/999.9-100.0/(999.9*max(z,.1))):1;
     normalDepth[pixel]=float4(normal,hit>=0?distance:0);
     if(hit>=0 && movingVertexStart>=0 && triangles[hit].x>=uint(movingVertexStart))
-        point.y+=previousLift-movingLift;
-    float3 delta=point-previousPosition;
+        surfacePoint.y+=previousLift-movingLift;
+    float3 delta=surfacePoint-previousPosition;
     float prevZ=dot(delta,previousForward);
     float2 prevUV=float2(dot(delta,previousRight)/(max(prevZ,.001)*.57735026919*float(renderSize.x)/renderSize.y),
         -dot(delta,previousUp)/(max(prevZ,.001)*.57735026919))*.5+.5;

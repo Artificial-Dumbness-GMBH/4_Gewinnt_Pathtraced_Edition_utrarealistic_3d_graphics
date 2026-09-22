@@ -219,17 +219,26 @@ extern "C" JNIEXPORT void JNICALL JNI_NAME(resize)(JNIEnv* env,jclass,jlong h,ji
 }
 extern "C" JNIEXPORT void JNICALL JNI_NAME(upload)(JNIEnv* env,jclass,jlong h,jobjectArray data,jint movingStart) {
     try {auto& b=backend(h);if(env->GetArrayLength(data)!=4) throw std::runtime_error("Four scene buffers required");b.wait();
-        std::array<ComPtr<ID3D12Resource>,4> resources;const UINT strides[]={16,16,48,48};
+        std::array<ComPtr<ID3D12Resource>,4> resources,staging;const UINT strides[]={16,16,48,48};
+        check(b.allocator->Reset(),"Reset scene allocator");check(b.cmd->Reset(b.allocator.Get(),nullptr),"Reset scene upload");
         for(UINT i=0;i<4;i++) {
             jobject buffer=env->GetObjectArrayElement(data,i);if(!buffer) throw std::runtime_error("Null scene buffer");
             void* address=env->GetDirectBufferAddress(buffer);jlong size=env->GetDirectBufferCapacity(buffer);env->DeleteLocalRef(buffer);
             if(!address||size<=0||size%strides[i]||size>INT_MAX) throw std::runtime_error("Invalid direct scene buffer");
             D3D12_HEAP_PROPERTIES hp{};hp.Type=D3D12_HEAP_TYPE_UPLOAD;
             D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=size;d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-            check(b.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&resources[i])),"Upload scene buffer");
-            void* mapped=nullptr;D3D12_RANGE noRead{0,0};check(resources[i]->Map(0,&noRead,&mapped),"Map scene buffer");memcpy(mapped,address,size_t(size));resources[i]->Unmap(0,nullptr);
+            check(b.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&staging[i])),"Create scene staging buffer");
+            void* mapped=nullptr;D3D12_RANGE noRead{0,0};check(staging[i]->Map(0,&noRead,&mapped),"Map scene buffer");memcpy(mapped,address,size_t(size));staging[i]->Unmap(0,nullptr);
+            hp.Type=D3D12_HEAP_TYPE_DEFAULT;
+            check(b.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&resources[i])),"Create GPU scene buffer");
+            b.cmd->CopyBufferRegion(resources[i].Get(),0,staging[i].Get(),0,UINT64(size));
+            D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Transition={resources[i].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+            b.cmd->ResourceBarrier(1,&barrier);
             if(i==1) b.frame.triangles=UINT(size/16);
         }
+        check(b.cmd->Close(),"Close scene upload");ID3D12CommandList* lists[]={b.cmd.Get()};
+        b.queue->ExecuteCommandLists(1,lists);b.wait();
         b.scene=std::move(resources);
         for(UINT i=0;i<4;i++) {D3D12_SHADER_RESOURCE_VIEW_DESC d{};d.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;d.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
             d.Buffer.NumElements=UINT(b.scene[i]->GetDesc().Width/strides[i]);d.Buffer.StructureByteStride=strides[i];b.device->CreateShaderResourceView(b.scene[i].Get(),&d,b.cpu(i));}
