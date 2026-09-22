@@ -1,243 +1,289 @@
+#define NOMINMAX
 #include <windows.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <dxgi1_6.h>
 #include <jni.h>
 #include <wrl.h>
-
-#include <string>
-#include <vector>
+#include <array>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
-
+#include <memory>
+#include <stdexcept>
+#include <vector>
+#include "upscaler.h"
+#include "shaders.h"
 using Microsoft::WRL::ComPtr;
 
+static void check(HRESULT hr,const char* operation) {
+    if(FAILED(hr)) { char code[16];snprintf(code,sizeof(code),"0x%08X",unsigned(hr));
+        throw std::runtime_error(std::string(operation)+": "+code); }
+}
+static void fail(JNIEnv* env,const std::exception& e) {
+    if(!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),e.what());
+}
+struct Texture {
+    ComPtr<ID3D12Resource> resource;
+    D3D12_RESOURCE_STATES state=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+};
+struct alignas(16) Frame {
+    float position[3];UINT frame;
+    float forward[3];UINT sequence;
+    float right[3];UINT samples;
+    float up[3];UINT bounces;
+    float prevPosition[3];UINT triangles;
+    float prevForward[3];int movingStart;
+    float prevRight[3];float lift;
+    float prevUp[3];float prevLift;
+    UINT width,height;float jx,jy;
+    UINT outWidth,outHeight;float exposure;UINT temporal;
+};
+static_assert(sizeof(Frame)==160);
 struct Backend {
     ComPtr<IDXGIAdapter1> adapter;
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12CommandQueue> queue;
-    ComPtr<IDXGISwapChain4> swapChain;
-    ComPtr<ID3D12DescriptorHeap> rtvHeap;
-    ComPtr<ID3D12RootSignature> rootSignature;
-    ComPtr<ID3D12PipelineState> pipeline;
+    ComPtr<IDXGISwapChain4> swap;
+    ComPtr<ID3D12DescriptorHeap> rtv,heap;
+    ComPtr<ID3D12RootSignature> computeRoot,displayRoot,filterRoot;
+    ComPtr<ID3D12PipelineState> computePipeline,displayPipeline,filterPipeline;
     ComPtr<ID3D12CommandAllocator> allocator;
-    ComPtr<ID3D12GraphicsCommandList> commandList;
+    ComPtr<ID3D12GraphicsCommandList> cmd;
     ComPtr<ID3D12Fence> fence;
-    std::vector<ComPtr<ID3D12Resource>> buffers;
-    HANDLE fenceEvent=nullptr;
+    std::array<ComPtr<ID3D12Resource>,2> buffers;
+    std::array<ComPtr<ID3D12Resource>,4> scene;
+    Texture color,guide,motion,depth,filtered,output;
+    Upscaler upscaler;
+    HANDLE event=nullptr;
     UINT64 fenceValue=0;
-    UINT rtvStride=0;
-    UINT bufferCount=0;
-    UINT width=0;
-    UINT height=0;
-    bool raytracingSupported=false;
-};
-
-static bool create_test_pipeline(Backend& backend);
-
-static bool wait_for_gpu(Backend& backend) {
-    if(!backend.queue||!backend.fence||!backend.fenceEvent) return false;
-    const UINT64 value=++backend.fenceValue;
-    if(FAILED(backend.queue->Signal(backend.fence.Get(),value))) return false;
-    if(backend.fence->GetCompletedValue()<value) {
-        if(FAILED(backend.fence->SetEventOnCompletion(value,backend.fenceEvent))) return false;
-        WaitForSingleObject(backend.fenceEvent,INFINITE);
+    UINT rtvStride=0,stride=0,width=0,height=0;
+    bool dxr=false,historyReset=true,sceneReady=false;
+    std::string mode="off";
+    std::wstring sdkPath;
+    Frame frame{};
+    ~Backend() {
+        // Keep all GPU resources alive until queued commands have finished.
+        try { wait(); } catch(...) { }
+        upscaler.close();
+        if(event) CloseHandle(event);
     }
-    return true;
-}
-
-static bool create_targets(Backend& backend) {
-    if(!backend.device||!backend.swapChain||!backend.rtvHeap) return false;
-    backend.buffers.clear();backend.buffers.resize(backend.bufferCount);
-    auto handle=backend.rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    for(UINT index=0;index<backend.bufferCount;++index) {
-        if(FAILED(backend.swapChain->GetBuffer(index,IID_PPV_ARGS(&backend.buffers[index])))) return false;
-        backend.device->CreateRenderTargetView(backend.buffers[index].Get(),nullptr,handle);
-        handle.ptr+=backend.rtvStride;
-    }
-    return true;
-}
-
-static bool create_backend(Backend& backend) {
-    ComPtr<IDXGIFactory6> factory;
-    if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)))) return false;
-    for(UINT index=0;;++index) {
-        ComPtr<IDXGIAdapter1> candidate;
-        if(factory->EnumAdapterByGpuPreference(index,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                IID_PPV_ARGS(&candidate))==DXGI_ERROR_NOT_FOUND) break;
-        DXGI_ADAPTER_DESC1 description{};
-        candidate->GetDesc1(&description);
-        if(description.Flags&DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        if(SUCCEEDED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,
-                IID_PPV_ARGS(&backend.device)))) {
-            D3D12_COMMAND_QUEUE_DESC queueDescription{};
-            queueDescription.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
-            if(FAILED(backend.device->CreateCommandQueue(&queueDescription,
-                IID_PPV_ARGS(&backend.queue)))) return false;
-            D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
-            if(SUCCEEDED(backend.device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5,
-                &options5,sizeof(options5))))
-            backend.raytracingSupported=options5.RaytracingTier>=D3D12_RAYTRACING_TIER_1_0;
-            backend.adapter=candidate;
-            return true;
+    void wait() {
+        if(!queue||!fence||!event) return;
+        check(queue->Signal(fence.Get(),++fenceValue),"Queue signal");
+        UINT64 done=fence->GetCompletedValue();
+        if(done==UINT64_MAX) check(device->GetDeviceRemovedReason(),"Device removed");
+        if(done<fenceValue) {
+            check(fence->SetEventOnCompletion(fenceValue,event),"Fence event");
+            if(WaitForSingleObject(event,INFINITE)!=WAIT_OBJECT_0) throw std::runtime_error("GPU fence wait failed");
         }
     }
-    return false;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpu(UINT i) { auto h=heap->GetCPUDescriptorHandleForHeapStart();h.ptr+=SIZE_T(i)*stride;return h; }
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu(UINT i) { auto h=heap->GetGPUDescriptorHandleForHeapStart();h.ptr+=UINT64(i)*stride;return h; }
+    void transition(Texture& t,D3D12_RESOURCE_STATES to) {
+        if(t.state==to) return;
+        D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        b.Transition={t.resource.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,t.state,to};cmd->ResourceBarrier(1,&b);t.state=to;
+    }
+    void texture(Texture& t,UINT w,UINT h,DXGI_FORMAT format) {
+        t.resource.Reset();t.state=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        D3D12_HEAP_PROPERTIES hp{};hp.Type=D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;d.Width=w;d.Height=h;
+        d.DepthOrArraySize=1;d.MipLevels=1;d.Format=format;d.SampleDesc.Count=1;d.Flags=D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        check(device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,t.state,nullptr,IID_PPV_ARGS(&t.resource)),"Create texture");
+    }
+    void srv(Texture& t,UINT slot) { device->CreateShaderResourceView(t.resource.Get(),nullptr,cpu(slot)); }
+    void uav(Texture& t,UINT slot) { device->CreateUnorderedAccessView(t.resource.Get(),nullptr,nullptr,cpu(slot)); }
+    void targets() {
+        auto h=rtv->GetCPUDescriptorHandleForHeapStart();
+        for(UINT i=0;i<2;i++) {check(swap->GetBuffer(i,IID_PPV_ARGS(&buffers[i])),"Get backbuffer");device->CreateRenderTargetView(buffers[i].Get(),nullptr,h);h.ptr+=rtvStride;}
+        upscaler.init(device.Get(),mode,sdkPath,width,height);
+        // The SDK owns its quality-mode input size. Native mode uses the configured cap.
+        UINT rw=upscaler.width,rh=upscaler.height;
+        if(mode=="off") {
+            float scale=std::min(1.f,std::min(float(frame.width)/width,float(frame.height)/height));
+            rw=std::max(1u,UINT(width*scale));rh=std::max(1u,UINT(height*scale));
+        }
+        frame.width=rw;frame.height=rh;frame.outWidth=width;frame.outHeight=height;
+        texture(color,rw,rh,DXGI_FORMAT_R32G32B32A32_FLOAT);
+        texture(guide,rw,rh,DXGI_FORMAT_R32G32B32A32_FLOAT);
+        texture(motion,rw,rh,DXGI_FORMAT_R16G16_FLOAT);
+        texture(depth,rw,rh,DXGI_FORMAT_R32_FLOAT);
+        texture(filtered,rw,rh,DXGI_FORMAT_R16G16B16A16_FLOAT);
+        texture(output,width,height,DXGI_FORMAT_R16G16B16A16_FLOAT);
+        uav(color,4);uav(guide,5);uav(motion,6);uav(depth,7);
+        srv(color,8);srv(guide,9);uav(filtered,10);
+        srv(mode=="off"?filtered:output,11);
+        historyReset=true;frame.frame=0;
+    }
+};
+static Backend& backend(jlong handle) { if(!handle) throw std::runtime_error("Closed DX12 backend");return *reinterpret_cast<Backend*>(handle); }
+static ComPtr<ID3DBlob> compile(const char* source,const char* entry,const char* profile) {
+    ComPtr<ID3DBlob> code,error;
+    HRESULT hr=D3DCompile(source,strlen(source),"embedded.hlsl",nullptr,nullptr,entry,profile,D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code,&error);
+    if(FAILED(hr)) throw std::runtime_error(error?std::string(static_cast<char*>(error->GetBufferPointer()),error->GetBufferSize()):"Shader compilation failed");
+    return code;
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_available(JNIEnv*,jclass) {
-    Backend backend;
-    return create_backend(backend) ? JNI_TRUE : JNI_FALSE;
+static ComPtr<ID3D12RootSignature> root(Backend& b,D3D12_ROOT_SIGNATURE_DESC& d) {
+    ComPtr<ID3DBlob> blob,error;check(D3D12SerializeRootSignature(&d,D3D_ROOT_SIGNATURE_VERSION_1,&blob,&error),"Serialize root signature");
+    ComPtr<ID3D12RootSignature> r;check(b.device->CreateRootSignature(0,blob->GetBufferPointer(),blob->GetBufferSize(),IID_PPV_ARGS(&r)),"Create root signature");return r;
 }
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_create(JNIEnv*,jclass) {
-    auto* backend=new Backend();
-    if(!create_backend(*backend)) { delete backend;return 0; }
-    return reinterpret_cast<jlong>(backend);
+static void pipelines(Backend& b) {
+    D3D12_DESCRIPTOR_RANGE ranges[2]{};
+    ranges[0]={D3D12_DESCRIPTOR_RANGE_TYPE_SRV,4,0,0,0};ranges[1]={D3D12_DESCRIPTOR_RANGE_TYPE_UAV,4,0,0,0};
+    D3D12_ROOT_PARAMETER p[3]{};
+    p[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;p[0].Constants={0,0,sizeof(Frame)/4};
+    for(UINT i=1;i<3;i++) {p[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;p[i].DescriptorTable={1,&ranges[i-1]};}
+    D3D12_ROOT_SIGNATURE_DESC d{};d.NumParameters=3;d.pParameters=p;b.computeRoot=root(b,d);
+    auto cs=compile(pathtraceSource,"main","cs_5_1");
+    D3D12_COMPUTE_PIPELINE_STATE_DESC cp{};cp.pRootSignature=b.computeRoot.Get();cp.CS={cs->GetBufferPointer(),cs->GetBufferSize()};
+    check(b.device->CreateComputePipelineState(&cp,IID_PPV_ARGS(&b.computePipeline)),"Create pathtracing pipeline");
+    p[0].Constants.Num32BitValues=4;ranges[0].NumDescriptors=2;ranges[1].NumDescriptors=1;
+    b.filterRoot=root(b,d);cs=compile(denoiseSource,"main","cs_5_1");cp.pRootSignature=b.filterRoot.Get();cp.CS={cs->GetBufferPointer(),cs->GetBufferSize()};
+    check(b.device->CreateComputePipelineState(&cp,IID_PPV_ARGS(&b.filterPipeline)),"Create denoise pipeline");
+    p[0].Constants.Num32BitValues=1;ranges[0].NumDescriptors=1;d.NumParameters=2;
+    D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.ShaderVisibility=D3D12_SHADER_VISIBILITY_PIXEL;
+    d.NumStaticSamplers=1;d.pStaticSamplers=&sampler;b.displayRoot=root(b,d);
+    auto vs=compile(presentSource,"vs","vs_5_1"),ps=compile(presentSource,"ps","ps_5_1");
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC gp{};gp.pRootSignature=b.displayRoot.Get();
+    gp.VS={vs->GetBufferPointer(),vs->GetBufferSize()};gp.PS={ps->GetBufferPointer(),ps->GetBufferSize()};
+    gp.RasterizerState.FillMode=D3D12_FILL_MODE_SOLID;gp.RasterizerState.CullMode=D3D12_CULL_MODE_NONE;gp.RasterizerState.DepthClipEnable=TRUE;
+    gp.BlendState.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
+    gp.SampleMask=UINT_MAX;gp.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    gp.NumRenderTargets=1;gp.RTVFormats[0]=DXGI_FORMAT_R8G8B8A8_UNORM;gp.SampleDesc.Count=1;
+    check(b.device->CreateGraphicsPipelineState(&gp,IID_PPV_ARGS(&b.displayPipeline)),"Create display pipeline");
 }
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_adapterName(JNIEnv* env,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->adapter) return env->NewStringUTF("");
-    DXGI_ADAPTER_DESC1 description{};
-    backend->adapter->GetDesc1(&description);
-    int length=WideCharToMultiByte(CP_UTF8,0,description.Description,-1,nullptr,0,nullptr,nullptr);
-    std::string name(length>0?length-1:0,'\0');
-    if(length>0) WideCharToMultiByte(CP_UTF8,0,description.Description,-1,name.data(),length-1,nullptr,nullptr);
-    return env->NewStringUTF(name.c_str());
+static void initialize(Backend& b) {
+    ComPtr<IDXGIFactory6> factory;check(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)),"Create DXGI factory");
+    for(UINT i=0;;i++) {
+        ComPtr<IDXGIAdapter1> candidate;
+        HRESULT hr=factory->EnumAdapterByGpuPreference(i,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&candidate));
+        if(hr==DXGI_ERROR_NOT_FOUND) break;check(hr,"Enumerate GPU");
+        DXGI_ADAPTER_DESC1 desc{};check(candidate->GetDesc1(&desc),"Get GPU description");
+        if(desc.Flags&DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+        if(SUCCEEDED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&b.device)))) {b.adapter=candidate;break;}
+    }
+    if(!b.device) throw std::runtime_error("No hardware DirectX 12 device available");
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options{};
+    b.dxr=SUCCEEDED(b.device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5,&options,sizeof(options)))&&options.RaytracingTier>=D3D12_RAYTRACING_TIER_1_0;
+    D3D12_COMMAND_QUEUE_DESC q{};q.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
+    check(b.device->CreateCommandQueue(&q,IID_PPV_ARGS(&b.queue)),"Create queue");
+    check(b.device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&b.allocator)),"Create allocator");
+    check(b.device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,b.allocator.Get(),nullptr,IID_PPV_ARGS(&b.cmd)),"Create command list");
+    check(b.cmd->Close(),"Close initial command list");
+    check(b.device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&b.fence)),"Create fence");
+    b.event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!b.event) throw std::runtime_error("CreateEvent failed");
+    D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;hd.NumDescriptors=12;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    check(b.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&b.heap)),"Create shader descriptor heap");
+    b.stride=b.device->GetDescriptorHandleIncrementSize(hd.Type);
+    hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;hd.NumDescriptors=2;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    check(b.device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&b.rtv)),"Create RTV heap");b.rtvStride=b.device->GetDescriptorHandleIncrementSize(hd.Type);
+    pipelines(b);
 }
-
-extern "C" JNIEXPORT void JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_destroy(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(backend) { if(backend->fenceEvent) wait_for_gpu(*backend);if(backend->fenceEvent) CloseHandle(backend->fenceEvent);delete backend; }
+#define JNI_NAME(name) Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_##name
+extern "C" JNIEXPORT jlong JNICALL JNI_NAME(create)(JNIEnv* env,jclass) {
+    try {auto b=std::make_unique<Backend>();initialize(*b);return reinterpret_cast<jlong>(b.release());}catch(const std::exception& e){fail(env,e);return 0;}
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_raytracingSupported(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    return backend&&backend->raytracingSupported ? JNI_TRUE : JNI_FALSE;
+extern "C" JNIEXPORT void JNICALL JNI_NAME(destroy)(JNIEnv*,jclass,jlong h) {delete reinterpret_cast<Backend*>(h);}
+extern "C" JNIEXPORT jstring JNICALL JNI_NAME(adapterName)(JNIEnv* env,jclass,jlong h) {
+    try {DXGI_ADAPTER_DESC1 d{};check(backend(h).adapter->GetDesc1(&d),"GPU name");return env->NewString(reinterpret_cast<const jchar*>(d.Description),jsize(wcslen(d.Description)));}
+    catch(const std::exception& e){fail(env,e);return nullptr;}
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_createSwapChain(JNIEnv*,jclass,jlong handle,
-        jlong windowHandle,jint width,jint height) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->queue||windowHandle==0||width<=0||height<=0) return JNI_FALSE;
-    ComPtr<IDXGIFactory4> factory;
-    if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 description{};
-    description.Width=static_cast<UINT>(width);description.Height=static_cast<UINT>(height);
-    description.Format=DXGI_FORMAT_R8G8B8A8_UNORM;description.BufferCount=2;
-    description.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;description.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    description.SampleDesc.Count=1;
-    ComPtr<IDXGISwapChain1> swapChain;
-    if(FAILED(factory->CreateSwapChainForHwnd(backend->queue.Get(),reinterpret_cast<HWND>(windowHandle),
-            &description,nullptr,nullptr,&swapChain))) return JNI_FALSE;
-    if(FAILED(swapChain.As(&backend->swapChain))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 actual{};backend->swapChain->GetDesc1(&actual);
-    D3D12_DESCRIPTOR_HEAP_DESC heapDescription{};
-    heapDescription.NumDescriptors=actual.BufferCount;heapDescription.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    if(FAILED(backend->device->CreateDescriptorHeap(&heapDescription,IID_PPV_ARGS(&backend->rtvHeap)))) return JNI_FALSE;
-    backend->rtvStride=backend->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    backend->bufferCount=actual.BufferCount;
-    backend->width=actual.Width;backend->height=actual.Height;
-        if(FAILED(backend->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-            IID_PPV_ARGS(&backend->allocator)))) return JNI_FALSE;
-        if(FAILED(backend->device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,backend->allocator.Get(),
-            nullptr,IID_PPV_ARGS(&backend->commandList)))) return JNI_FALSE;
-        if(FAILED(backend->commandList->Close())) return JNI_FALSE;
-        if(FAILED(backend->device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&backend->fence)))) return JNI_FALSE;
-        backend->fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
-        if(!backend->fenceEvent||!create_targets(*backend)||!create_test_pipeline(*backend)) return JNI_FALSE;
-        return JNI_TRUE;
+extern "C" JNIEXPORT jboolean JNICALL JNI_NAME(raytracingSupported)(JNIEnv* env,jclass,jlong h) {
+    try {return backend(h).dxr;}catch(const std::exception& e){fail(env,e);return false;}
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_resizeSwapChain(JNIEnv*,jclass,jlong handle,
-        jint width,jint height) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->swapChain||width<=0||height<=0) return JNI_FALSE;
-    if(!wait_for_gpu(*backend)) return JNI_FALSE;
-    backend->buffers.clear();
-    backend->rtvHeap.Reset();
-    if(FAILED(backend->swapChain->ResizeBuffers(0,static_cast<UINT>(width),static_cast<UINT>(height),
-            DXGI_FORMAT_UNKNOWN,0))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 actual{};backend->swapChain->GetDesc1(&actual);backend->bufferCount=actual.BufferCount;
-    backend->width=actual.Width;backend->height=actual.Height;
-    D3D12_DESCRIPTOR_HEAP_DESC heapDescription{};
-    heapDescription.NumDescriptors=backend->bufferCount;heapDescription.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    if(FAILED(backend->device->CreateDescriptorHeap(&heapDescription,IID_PPV_ARGS(&backend->rtvHeap)))) return JNI_FALSE;
-    return create_targets(*backend) ? JNI_TRUE : JNI_FALSE;
+extern "C" JNIEXPORT jstring JNICALL JNI_NAME(upscalerName)(JNIEnv* env,jclass,jlong h) {
+    try {return env->NewStringUTF(backend(h).upscaler.name.c_str());}catch(const std::exception& e){fail(env,e);return nullptr;}
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_clear(JNIEnv*,jclass,jlong handle,
-        jfloat red,jfloat green,jfloat blue,jfloat alpha) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->swapChain||!backend->allocator||!backend->commandList) return JNI_FALSE;
-    const UINT index=backend->swapChain->GetCurrentBackBufferIndex();
-    if(index>=backend->buffers.size()||FAILED(backend->allocator->Reset())) return JNI_FALSE;
-    if(FAILED(backend->commandList->Reset(backend->allocator.Get(),nullptr))) return JNI_FALSE;
-    D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource=backend->buffers[index].Get();barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_RENDER_TARGET;
-    backend->commandList->ResourceBarrier(1,&barrier);
-    auto target=backend->rtvHeap->GetCPUDescriptorHandleForHeapStart();target.ptr+=index*backend->rtvStride;
-    const FLOAT color[]={red,green,blue,alpha};backend->commandList->ClearRenderTargetView(target,color,0,nullptr);
-    D3D12_VIEWPORT viewport{0,0,static_cast<FLOAT>(backend->width),static_cast<FLOAT>(backend->height),0,1};
-    D3D12_RECT scissor{0,0,static_cast<LONG>(backend->width),static_cast<LONG>(backend->height)};
-    backend->commandList->RSSetViewports(1,&viewport);backend->commandList->RSSetScissorRects(1,&scissor);
-    backend->commandList->SetPipelineState(backend->pipeline.Get());backend->commandList->SetGraphicsRootSignature(backend->rootSignature.Get());
-    backend->commandList->OMSetRenderTargets(1,&target,FALSE,nullptr);
-    backend->commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    backend->commandList->DrawInstanced(3,1,0,0);
-    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;
-    backend->commandList->ResourceBarrier(1,&barrier);
-    if(FAILED(backend->commandList->Close())) return JNI_FALSE;
-    ID3D12CommandList* lists[]={backend->commandList.Get()};backend->queue->ExecuteCommandLists(1,lists);
-    return wait_for_gpu(*backend) ? JNI_TRUE : JNI_FALSE;
+extern "C" JNIEXPORT void JNICALL JNI_NAME(attach)(JNIEnv* env,jclass,jlong h,jlong hwnd,jint w,jint ht,jint rw,jint rh,jstring mode,jstring dll) {
+    try {
+        auto& b=backend(h);if(b.swap||!hwnd||w<1||ht<1||rw<1||rh<1) throw std::runtime_error("Invalid or repeated window attachment");
+        const char* m=env->GetStringUTFChars(mode,nullptr);if(!m) return;b.mode=m;env->ReleaseStringUTFChars(mode,m);
+        const jchar* s=env->GetStringChars(dll,nullptr);if(!s) return;b.sdkPath.assign(reinterpret_cast<const wchar_t*>(s),env->GetStringLength(dll));env->ReleaseStringChars(dll,s);
+        b.frame.width=rw;b.frame.height=rh;b.width=w;b.height=ht;b.frame.temporal=b.mode!="off";
+        ComPtr<IDXGIFactory4> f;check(CreateDXGIFactory2(0,IID_PPV_ARGS(&f)),"Create swapchain factory");
+        DXGI_SWAP_CHAIN_DESC1 d{};d.Width=w;d.Height=ht;d.Format=DXGI_FORMAT_R8G8B8A8_UNORM;d.BufferCount=2;
+        d.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;d.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;d.SampleDesc.Count=1;
+        ComPtr<IDXGISwapChain1> swap;check(f->CreateSwapChainForHwnd(b.queue.Get(),reinterpret_cast<HWND>(hwnd),&d,nullptr,nullptr,&swap),"Create swapchain");
+        check(swap.As(&b.swap),"Query swapchain");check(f->MakeWindowAssociation(reinterpret_cast<HWND>(hwnd),DXGI_MWA_NO_ALT_ENTER),"Window association");b.targets();
+    }catch(const std::exception& e){fail(env,e);}
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_present(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    return backend&&backend->swapChain&&SUCCEEDED(backend->swapChain->Present(1,0)) ? JNI_TRUE : JNI_FALSE;
+extern "C" JNIEXPORT void JNICALL JNI_NAME(resize)(JNIEnv* env,jclass,jlong h,jint w,jint ht,jint rw,jint rh) {
+    try {auto& b=backend(h);if(!b.swap||w<1||ht<1||rw<1||rh<1) throw std::runtime_error("Invalid resize");b.wait();
+        for(auto& buffer:b.buffers) buffer.Reset();
+        check(b.swap->ResizeBuffers(2,w,ht,DXGI_FORMAT_UNKNOWN,0),"Resize swapchain");
+        b.width=w;b.height=ht;b.frame.width=rw;b.frame.height=rh;b.targets();
+    }catch(const std::exception& e){fail(env,e);}
 }
-
-static bool create_test_pipeline(Backend& backend) {
-    static const char* source=R"(
-struct Output { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
-Output vs(uint id : SV_VertexID) {
-    float2 positions[3] = { float2(-1,-1), float2(-1,3), float2(3,-1) };
-    Output output; output.position=float4(positions[id],0,1); output.uv=positions[id]*0.5+0.5; return output;
+extern "C" JNIEXPORT void JNICALL JNI_NAME(upload)(JNIEnv* env,jclass,jlong h,jobjectArray data,jint movingStart) {
+    try {auto& b=backend(h);if(env->GetArrayLength(data)!=4) throw std::runtime_error("Four scene buffers required");b.wait();
+        std::array<ComPtr<ID3D12Resource>,4> resources;const UINT strides[]={16,16,48,48};
+        for(UINT i=0;i<4;i++) {
+            jobject buffer=env->GetObjectArrayElement(data,i);if(!buffer) throw std::runtime_error("Null scene buffer");
+            void* address=env->GetDirectBufferAddress(buffer);jlong size=env->GetDirectBufferCapacity(buffer);env->DeleteLocalRef(buffer);
+            if(!address||size<=0||size%strides[i]||size>INT_MAX) throw std::runtime_error("Invalid direct scene buffer");
+            D3D12_HEAP_PROPERTIES hp{};hp.Type=D3D12_HEAP_TYPE_UPLOAD;
+            D3D12_RESOURCE_DESC d{};d.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER;d.Width=size;d.Height=1;d.DepthOrArraySize=1;d.MipLevels=1;d.SampleDesc.Count=1;d.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+            check(b.device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&resources[i])),"Upload scene buffer");
+            void* mapped=nullptr;D3D12_RANGE noRead{0,0};check(resources[i]->Map(0,&noRead,&mapped),"Map scene buffer");memcpy(mapped,address,size_t(size));resources[i]->Unmap(0,nullptr);
+            if(i==1) b.frame.triangles=UINT(size/16);
+        }
+        b.scene=std::move(resources);
+        for(UINT i=0;i<4;i++) {D3D12_SHADER_RESOURCE_VIEW_DESC d{};d.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;d.ViewDimension=D3D12_SRV_DIMENSION_BUFFER;
+            d.Buffer.NumElements=UINT(b.scene[i]->GetDesc().Width/strides[i]);d.Buffer.StructureByteStride=strides[i];b.device->CreateShaderResourceView(b.scene[i].Get(),&d,b.cpu(i));}
+        b.frame.movingStart=movingStart;b.historyReset=true;b.frame.frame=0;b.sceneReady=true;
+    }catch(const std::exception& e){fail(env,e);}
 }
-float4 ps(Output input) : SV_TARGET {
-    float3 top=float3(0.04,0.22,0.58), bottom=float3(0.01,0.03,0.10);
-    float3 color=lerp(bottom,top,input.uv.y);
-    float grid=(step(0.98,frac(input.uv.x*12))+step(0.98,frac(input.uv.y*8)))*0.12;
-    return float4(color+grid,1);
-}
-)";
-    ComPtr<ID3DBlob> vertex,fragment,errors;
-    if(FAILED(D3DCompile(source,strlen(source),"dx12_test.hlsl",nullptr,nullptr,"vs","vs_5_0",
-            D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&vertex,&errors))) return false;
-    if(FAILED(D3DCompile(source,strlen(source),"dx12_test.hlsl",nullptr,nullptr,"ps","ps_5_0",
-            D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&fragment,&errors))) return false;
-    D3D12_ROOT_SIGNATURE_DESC rootDescription{};
-    rootDescription.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-    ComPtr<ID3DBlob> serializedRoot;
-    if(FAILED(D3D12SerializeRootSignature(&rootDescription,D3D_ROOT_SIGNATURE_VERSION_1,
-            &serializedRoot,&errors))) return false;
-    if(FAILED(backend.device->CreateRootSignature(0,serializedRoot->GetBufferPointer(),serializedRoot->GetBufferSize(),
-            IID_PPV_ARGS(&backend.rootSignature)))) return false;
-    D3D12_RASTERIZER_DESC rasterizer{};rasterizer.FillMode=D3D12_FILL_MODE_SOLID;rasterizer.CullMode=D3D12_CULL_MODE_NONE;rasterizer.DepthClipEnable=TRUE;
-    D3D12_BLEND_DESC blend{};blend.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline{};pipeline.pRootSignature=backend.rootSignature.Get();
-    pipeline.VS={vertex->GetBufferPointer(),vertex->GetBufferSize()};pipeline.PS={fragment->GetBufferPointer(),fragment->GetBufferSize()};
-    pipeline.RasterizerState=rasterizer;pipeline.BlendState=blend;pipeline.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pipeline.NumRenderTargets=1;pipeline.RTVFormats[0]=DXGI_FORMAT_R8G8B8A8_UNORM;pipeline.SampleDesc.Count=1;
-    return SUCCEEDED(backend.device->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&backend.pipeline)));
+static float halton(UINT index,UINT base) {float result=0,fraction=1;while(index){fraction/=base;result+=fraction*(index%base);index/=base;}return result;}
+extern "C" JNIEXPORT void JNICALL JNI_NAME(render)(JNIEnv* env,jclass,jlong h,jfloatArray camera,jfloat lift,jint samples,jint bounces,jfloat exposure,jfloat strength,jboolean denoise,jfloat ms,jboolean reset,jboolean vsync) {
+    try {auto& b=backend(h);if(!b.swap||!b.sceneReady||env->GetArrayLength(camera)!=12) throw std::runtime_error("Renderer is not ready");
+        if(samples<1||samples>16||bounces<1||bounces>12||!std::isfinite(lift)||!std::isfinite(exposure)||!std::isfinite(strength)||!std::isfinite(ms)) throw std::runtime_error("Invalid frame settings");
+        float c[12];env->GetFloatArrayRegion(camera,0,12,c);if(env->ExceptionCheck()) return;
+        for(float v:c) if(!std::isfinite(v)) throw std::runtime_error("Invalid camera");
+        bool changed=memcmp(b.frame.position,c,12)||memcmp(b.frame.forward,c+3,12)||memcmp(b.frame.right,c+6,12)||memcmp(b.frame.up,c+9,12)||b.frame.lift!=lift;
+        memcpy(b.frame.prevPosition,b.frame.position,12);memcpy(b.frame.prevForward,b.frame.forward,12);memcpy(b.frame.prevRight,b.frame.right,12);memcpy(b.frame.prevUp,b.frame.up,12);b.frame.prevLift=b.frame.lift;
+        memcpy(b.frame.position,c,12);memcpy(b.frame.forward,c+3,12);memcpy(b.frame.right,c+6,12);memcpy(b.frame.up,c+9,12);b.frame.lift=lift;
+        if(reset) b.historyReset=true;
+        if(changed||b.historyReset||b.frame.samples!=UINT(samples)||b.frame.bounces!=UINT(bounces)) b.frame.frame=0;
+        if(b.historyReset) {memcpy(b.frame.prevPosition,c,12);memcpy(b.frame.prevForward,c+3,12);memcpy(b.frame.prevRight,c+6,12);memcpy(b.frame.prevUp,c+9,12);b.frame.prevLift=lift;}
+        b.frame.samples=samples;b.frame.bounces=bounces;b.frame.exposure=exposure;
+        UINT phase=UINT(std::ceil(8.f*float(b.width)/b.frame.width*float(b.width)/b.frame.width));
+        b.frame.jx=b.frame.temporal?halton(b.frame.sequence%phase+1,2)-.5f:0;
+        b.frame.jy=b.frame.temporal?halton(b.frame.sequence%phase+1,3)-.5f:0;
+        b.wait();check(b.allocator->Reset(),"Reset allocator");check(b.cmd->Reset(b.allocator.Get(),nullptr),"Reset commands");
+        ID3D12DescriptorHeap* heaps[]={b.heap.Get()};b.cmd->SetDescriptorHeaps(1,heaps);
+        for(Texture* t:{&b.color,&b.guide,&b.motion,&b.depth}) b.transition(*t,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        b.cmd->SetPipelineState(b.computePipeline.Get());b.cmd->SetComputeRootSignature(b.computeRoot.Get());
+        b.cmd->SetComputeRoot32BitConstants(0,sizeof(Frame)/4,&b.frame,0);b.cmd->SetComputeRootDescriptorTable(1,b.gpu(0));b.cmd->SetComputeRootDescriptorTable(2,b.gpu(4));
+        // The accumulation UAV is read on subsequent stationary frames.
+        D3D12_RESOURCE_BARRIER u{};u.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;u.UAV.pResource=b.color.resource.Get();b.cmd->ResourceBarrier(1,&u);
+        b.cmd->Dispatch((b.frame.width+7)/8,(b.frame.height+7)/8,1);
+        b.transition(b.color,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);b.transition(b.guide,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        b.transition(b.filtered,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        b.cmd->SetPipelineState(b.filterPipeline.Get());b.cmd->SetComputeRootSignature(b.filterRoot.Get());
+        struct {UINT w,h;float strength;UINT enabled;} filter{b.frame.width,b.frame.height,strength,UINT(denoise)};
+        b.cmd->SetComputeRoot32BitConstants(0,4,&filter,0);b.cmd->SetComputeRootDescriptorTable(1,b.gpu(8));b.cmd->SetComputeRootDescriptorTable(2,b.gpu(10));
+        b.cmd->Dispatch((b.frame.width+7)/8,(b.frame.height+7)/8,1);
+        if(b.frame.temporal) {
+            b.transition(b.filtered,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);b.transition(b.depth,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);b.transition(b.motion,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            b.transition(b.output,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            b.upscaler.dispatch(b.cmd.Get(),b.filtered.resource.Get(),b.depth.resource.Get(),b.motion.resource.Get(),b.output.resource.Get(),b.frame.jx,b.frame.jy,std::clamp(ms,1.f,1000.f),b.historyReset);
+            b.transition(b.output,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        } else b.transition(b.filtered,D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        UINT index=b.swap->GetCurrentBackBufferIndex();
+        D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition={b.buffers[index].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET};b.cmd->ResourceBarrier(1,&barrier);
+        auto target=b.rtv->GetCPUDescriptorHandleForHeapStart();target.ptr+=SIZE_T(index)*b.rtvStride;
+        D3D12_VIEWPORT viewport{0,0,float(b.width),float(b.height),0,1};D3D12_RECT scissor{0,0,LONG(b.width),LONG(b.height)};
+        // Vendor dispatch may replace all descriptor heaps and pipeline state.
+        b.cmd->SetDescriptorHeaps(1,heaps);b.cmd->SetGraphicsRootSignature(b.displayRoot.Get());b.cmd->SetPipelineState(b.displayPipeline.Get());
+        b.cmd->SetGraphicsRoot32BitConstants(0,1,&exposure,0);b.cmd->SetGraphicsRootDescriptorTable(1,b.gpu(11));
+        b.cmd->RSSetViewports(1,&viewport);b.cmd->RSSetScissorRects(1,&scissor);b.cmd->OMSetRenderTargets(1,&target,FALSE,nullptr);
+        b.cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);b.cmd->DrawInstanced(3,1,0,0);
+        std::swap(barrier.Transition.StateBefore,barrier.Transition.StateAfter);b.cmd->ResourceBarrier(1,&barrier);
+        check(b.cmd->Close(),"Close frame");ID3D12CommandList* lists[]={b.cmd.Get()};b.queue->ExecuteCommandLists(1,lists);
+        check(b.swap->Present(vsync?1:0,0),"Present");b.historyReset=false;b.frame.frame++;b.frame.sequence++;
+    }catch(const std::exception& e){fail(env,e);}
 }
