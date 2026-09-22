@@ -21,18 +21,12 @@ mvn compile exec:java -Dexec.args=--console
 mvn compile exec:java -Dlwjgl.natives=natives-linux
 ```
 
-Der experimentelle DirectX-12-Modus öffnet ein natives DX12-Fenster und zeigt einen
-ersten GPU-Clear-Pass. Die native Bridge kann ohne Administratorrechte mit CMake
-und LLVM-MinGW gebaut werden:
+Der DirectX-12-Branch enthält einen nativen Compute-Pathtracing-Pfad mit optionalen
+FSR-4.1- und XeSS-SR-SDK-Aufrufen. Der Port ist noch nicht hardwarevalidiert und hat
+noch nicht alle OpenGL-Funktionen. INT8 lässt sich über die geprüfte offizielle API
+nicht erzwingen; XeSS Frame Generation ist noch nicht enthalten.
 
-```sh
-winget install --id Kitware.CMake --exact --scope user
-winget install --id MartinStorsjo.LLVM-MinGW.UCRT --exact --scope user
-# Nach der Installation eine neue PowerShell öffnen.
-cmake -S src/main/native -B target/dx12-mingw -G "MinGW Makefiles" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-cmake --build target/dx12-mingw
-mvn compile exec:java -Dpt.backend=dx12 -Dpt.dx12.library=target/dx12-mingw/viergewinnt_dx12.dll
-```
+[Build, Startparameter, SDK-Versionen und offene Punkte](docs/dx12.md).
 
 WASD bewegt die Kamera, die eingefangene Maus dreht sie ohne zusätzliche Maustaste.
 Tasten 1–7 werfen abwechselnd rote/blaue Steine ein. Die zugehörigen Nummern stehen
