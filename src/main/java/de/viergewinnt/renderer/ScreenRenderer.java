@@ -24,6 +24,7 @@ public final class ScreenRenderer implements AutoCloseable {
         glViewport(0,0,width,height);glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_FRAMEBUFFER_SRGB);
         shader.use();shader.integer("sampleCount",samples);shader.integer("denoise",settings.denoiser()==RenderSettings.Denoiser.OWN?1:0);
         shader.scalar("denoiseStrength",settings.denoiseStrength());shader.scalar("exposure",settings.exposure());
+        shader.scalar("sharpness",settings.graphics().sharpness());
         shader.integer("normalDepth",1);shader.integer("albedoGuide",2);
         glActiveTexture(GL_TEXTURE0+1);glBindTexture(GL_TEXTURE_2D,normalDepth);
         glActiveTexture(GL_TEXTURE0+2);glBindTexture(GL_TEXTURE_2D,albedoGuide);

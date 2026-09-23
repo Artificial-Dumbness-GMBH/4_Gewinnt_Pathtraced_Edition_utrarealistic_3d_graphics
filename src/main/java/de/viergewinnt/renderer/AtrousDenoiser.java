@@ -9,6 +9,10 @@ public final class AtrousDenoiser implements AutoCloseable {
     private final int[] pingPong=new int[2];
     private int width,height;
     public int filter(int color,int normalDepth,int albedo,int w,int h,Camera camera,int samples,float strength) {
+        return filter(color,normalDepth,albedo,w,h,camera,samples,strength,4);
+    }
+    public int filter(int color,int normalDepth,int albedo,int w,int h,Camera camera,int samples,float strength,int passes) {
+        if(passes<1||passes>5) throw new IllegalArgumentException("Denoiser passes must be 1..5");
         if(w!=width||h!=height) {
             releaseTextures();width=w;height=h;
             glActiveTexture(GL_TEXTURE0);
@@ -25,7 +29,7 @@ public final class AtrousDenoiser implements AutoCloseable {
         glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,normalDepth);
         glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,albedo);
         int input=color;
-        for(int pass=0;pass<4;pass++) {
+        for(int pass=0;pass<passes;pass++) {
             int output=pingPong[pass%2];
             shader.integer("stepwidth",1<<pass);
             glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,input);

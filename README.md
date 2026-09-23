@@ -21,18 +21,20 @@ mvn compile exec:java -Dexec.args=--console
 mvn compile exec:java -Dlwjgl.natives=natives-linux
 ```
 
-Der experimentelle DirectX-12-Modus öffnet ein natives DX12-Fenster und zeigt einen
-ersten GPU-Clear-Pass. Die native Bridge kann ohne Administratorrechte mit CMake
-und LLVM-MinGW gebaut werden:
+Der experimentelle DirectX-12-Modus enthält jetzt den Spielrenderer mit
+Software-BVH, optionalem DXR, FSR-4.1-SDK-Anbindung, XeSS-SR/FG und erweitertem
+Grafikmenü. Windows-GPU-Validierung steht noch aus. Build mit JDK 25, CMake und
+Visual Studio 2022 Build Tools (C++ / Windows SDK):
 
 ```sh
-winget install --id Kitware.CMake --exact --scope user
-winget install --id MartinStorsjo.LLVM-MinGW.UCRT --exact --scope user
-# Nach der Installation eine neue PowerShell öffnen.
-cmake -S src/main/native -B target/dx12-mingw -G "MinGW Makefiles" -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
-cmake --build target/dx12-mingw
-mvn compile exec:java -Dpt.backend=dx12 -Dpt.dx12.library=target/dx12-mingw/viergewinnt_dx12.dll
+./build-dx12.ps1
+mvn compile exec:java "-Dpt.backend=dx12" "-Dpt.dx12.library=target/dx12/Release/viergewinnt_dx12.dll"
 ```
+
+[DX12-Funktionen, SDK-Voraussetzungen, Fallbacks und Prüfstatus](docs/dx12-rendering.md).
+FSR zeigt den wirklich gewählten Provider an; XeSS-FG wird nur bei erfolgreicher
+SDK-/GPU-Abfrage angeboten. Die OpenGL-Hologramme werden in DX12 vorerst durch
+eine Bildschirm-HUD ersetzt.
 
 WASD bewegt die Kamera, die eingefangene Maus dreht sie ohne zusätzliche Maustaste.
 Tasten 1–7 werfen abwechselnd rote/blaue Steine ein. Die zugehörigen Nummern stehen

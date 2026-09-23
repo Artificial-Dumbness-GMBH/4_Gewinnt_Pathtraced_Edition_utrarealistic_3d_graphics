@@ -72,6 +72,7 @@ import de.viergewinnt.ui.PauseMenu;
 
 public class Window {
     private long window;
+    private boolean dx12Started;
     /** Retains the existing entry point. */
     public void create() { create(new Board()); }
     public void create(Board board) {
@@ -81,9 +82,11 @@ public class Window {
             if(!glfwInit()) throw new IllegalStateException("GLFW konnte nicht initialisiert werden.");
             if("dx12".equalsIgnoreCase(System.getProperty("pt.backend","opengl"))) {
                 try {
-                    createDirectX12();
+                    createDirectX12(board);
                     return;
                 } catch(RuntimeException|UnsatisfiedLinkError e) {
+                    if(window!=0) { Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0; }
+                    if(dx12Started||Boolean.getBoolean("pt.requireDx12")) throw e; // Packaged DX12 launcher must not silently select OpenGL.
                     System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
                 }
             }
@@ -112,6 +115,7 @@ public class Window {
             Game game=new Game(board);
             DropAnimation drop=new DropAnimation();
             RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
+            glfwSwapInterval(!Boolean.getBoolean("pt.benchmark")&&settings.graphics().vsync()?1:0);
             PauseMenu menu=new PauseMenu(settings);
             int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];
             double[] cursorX=new double[1],cursorY=new double[1];
@@ -153,6 +157,7 @@ public class Window {
                             case QUIT -> glfwSetWindowShouldClose(window,true);
                             case SETTINGS -> {
                                 tracer.applySettings(menu.settings());
+                                glfwSwapInterval(!Boolean.getBoolean("pt.benchmark")&&menu.settings().graphics().vsync()?1:0);
                                 try { SettingsStore.save(SettingsStore.defaultPath(),menu.settings());menu.saved(true); }
                                 catch(java.io.IOException|SecurityException e) { menu.saved(false);System.err.println("Einstellungen nicht gespeichert: "+e.getMessage()); }
                             }
@@ -172,6 +177,7 @@ public class Window {
                     hologram.render(game,camera,tracer.depthGuideTexture(),width[0],height[0],(float)(now%3600),paused);
                     if(paused) menuRenderer.render(menu,width[0],height[0]);
                     glfwSwapBuffers(window);frames++;totalFrames++;
+                    limitFrame(now,menu.settings().graphics().frameLimit());
                     if(now-titleTime>=1) {
                         String state=paused?"PAUSE":HUD.getStatusText(game);
                         String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | ESC: Menü",frames/(now-titleTime),tracer.samples(),state);
@@ -190,34 +196,121 @@ public class Window {
         }
     }
 
-    private void createDirectX12() {
-        glfwDefaultWindowHints();
-        glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);glfwWindowHint(GLFW_RESIZABLE,GLFW_TRUE);
+    private void createDirectX12(Board board) {
+        glfwDefaultWindowHints();glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);glfwWindowHint(GLFW_RESIZABLE,GLFW_TRUE);
         window=glfwCreateWindow(1280,720,"4 Gewinnt - DirectX 12",0,0);
         if(window==0) throw new IllegalStateException("DX12-Fenster konnte nicht erstellt werden.");
-        long nativeWindow=glfwGetWin32Window(window);
-        if(nativeWindow==0) throw new IllegalStateException("Win32-Fensterhandle konnte nicht ermittelt werden.");
         try(DirectX12Backend backend=new DirectX12Backend()) {
-            System.out.println("DX12 GPU: "+backend.adapterName()+" | DXR: "+backend.raytracingSupported());
-            int[] width=new int[1],height=new int[1];
-            glfwGetFramebufferSize(window,width,height);
-            backend.attachWindow(nativeWindow,Math.max(1,width[0]),Math.max(1,height[0]));
-            int lastWidth=width[0],lastHeight=height[0];
-            int smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",0),frames=0;
-            while(!glfwWindowShouldClose(window)) {
-                glfwPollEvents();glfwGetFramebufferSize(window,width,height);
-                if(width[0]>0&&height[0]>0) {
-                    if(width[0]!=lastWidth||height[0]!=lastHeight) {
-                        backend.resize(width[0],height[0]);lastWidth=width[0];lastHeight=height[0];
+            int[] initialWidth=new int[1],initialHeight=new int[1];glfwGetFramebufferSize(window,initialWidth,initialHeight);
+            backend.attachWindow(glfwGetWin32Window(window),Math.max(1,initialWidth[0]),Math.max(1,initialHeight[0]));
+            glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
+            Camera camera=new Camera();
+            boolean[] dropKeys=new boolean[Board.COLUMNS],menuKeys=new boolean[4];
+            Game game=new Game(board);
+            DropAnimation drop=new DropAnimation();
+            RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
+            PauseMenu menu=new PauseMenu(settings);menu.capabilities(backend.capabilities());
+            String lastHud="";boolean overlayWasMenu=false;
+            int renderWidth=0,renderHeight=0;
+            int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];
+            double[] cursorX=new double[1],cursorY=new double[1];
+            double last=glfwGetTime(),titleTime=last,lastMouseX=Double.NaN,lastMouseY=Double.NaN;
+            int frames=0,totalFrames=0,smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",Integer.getInteger("pt.smokeFrames",0));
+            boolean paused=false,escapeHeld=false,mouseHeld=false;
+            {
+                backend.applySettings(settings);backend.setScene(Scene.fromBoard(game.getBoard()));
+                menu.capabilities(backend.capabilities());menu.rendererStatus(backend.status());
+                dx12Started=true;
+                System.out.println("DX12: "+backend.status());
+                while(!glfwWindowShouldClose(window)) {
+                    glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
+                    glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);
+                    if(width[0]<=0||height[0]<=0||windowWidth[0]<=0||windowHeight[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
+                    if(width[0]!=renderWidth||height[0]!=renderHeight) { backend.resize(width[0],height[0]);renderWidth=width[0];renderHeight=height[0]; }
+                    backend.beginFrame();
+                    boolean wasPaused=paused;
+                    boolean escape=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
+                    if(escape&&!escapeHeld) {
+                        if(!(paused&&menu.back())) {
+                            paused=!paused;
+                            if(paused) {
+                                menu.open(HUD.getStatusText(game));glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
+                                lastMouseX=Double.NaN;lastMouseY=Double.NaN;
+                            } else captureMouse(camera,windowWidth[0],windowHeight[0]);
+                        }
                     }
-                    backend.clear(.025f,.08f,.16f,1f);backend.present();
-                    if(smokeFrames>0&&++frames>=smokeFrames) glfwSetWindowShouldClose(window,true);
+                    escapeHeld=escape;
+                    int column=Input.getTriggeredColumn(window,dropKeys); // Track releases even while paused.
+                    boolean tab=triggered(GLFW_KEY_TAB,menuKeys,0),enter=triggered(GLFW_KEY_ENTER,menuKeys,1);
+                    boolean up=triggered(GLFW_KEY_UP,menuKeys,2),down=triggered(GLFW_KEY_DOWN,menuKeys,3);
+                    boolean mouse=glfwGetMouseButton(window,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
+                    if(paused) {
+                        glfwGetCursorPos(window,cursorX,cursorY);
+                        double[] point=PauseMenu.panelPoint(cursorX[0],cursorY[0],windowWidth[0],windowHeight[0],width[0],height[0]);
+                        if(cursorX[0]!=lastMouseX||cursorY[0]!=lastMouseY) menu.hover(point[0],point[1]);
+                        lastMouseX=cursorX[0];lastMouseY=cursorY[0];
+                        if(tab||up||down) menu.focusNext(up||(tab&&glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS)?-1:1);
+                        PauseMenu.Action action=mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
+                        switch(action) {
+                            case RESUME -> { paused=false;captureMouse(camera,windowWidth[0],windowHeight[0]); }
+                            case RESTART -> { drop.cancel();game.reset();backend.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
+                            case QUIT -> glfwSetWindowShouldClose(window,true);
+                            case SETTINGS -> {
+                                backend.applySettings(menu.settings());menu.capabilities(backend.capabilities());menu.rendererStatus(backend.status());
+                                try { SettingsStore.save(SettingsStore.defaultPath(),menu.settings());menu.saved(true); }
+                                catch(java.io.IOException|SecurityException e) { menu.saved(false);System.err.println("Einstellungen nicht gespeichert: "+e.getMessage()); }
+                            }
+                            default -> { }
+                        }
+                    } else {
+                        camera.update(window,dt); // The tracer detects camera changes itself.
+                        boolean falling=drop.active();
+                        if(drop.advance(game,wasPaused?0:dt)) backend.setScene(Scene.fromBoard(game.getBoard()));
+                        if(!falling&&column>=0&&drop.start(game,column)) backend.setScene(Scene.fromBoard(game.getBoard(),drop));
+                        if(drop.active()) backend.setDropLift(drop.lift());
+                    }
+                    mouseHeld=mouse;
+                    if(glfwWindowShouldClose(window)) break;
+                    if(paused) {
+                        if(menu.takeDirty()||!overlayWasMenu) backend.overlay(menu.image(1));
+                    } else {
+                        String hud=HUD.getStatusText(game);
+                        if(!hud.equals(lastHud)||overlayWasMenu) { backend.overlay(dx12Hud(hud));lastHud=hud; }
+                    }
+                    overlayWasMenu=paused;
+                    backend.render(camera,dt,paused?1:2);frames++;totalFrames++;
+                    menu.capabilities(backend.capabilities());
+                    limitFrame(now,menu.settings().graphics().frameLimit());
+                    if(now-titleTime>=1) {
+                        String state=paused?"PAUSE":HUD.getStatusText(game);
+                        String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | DX12 | %.1f FPS | %s | %s | ESC: Menü",frames/(now-titleTime),backend.status(),state);
+                        menu.rendererStatus(backend.status());
+                        glfwSetWindowTitle(window,title);if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
+                        frames=0;titleTime=now;
+                    }
+                    if(smokeFrames>0) {
+                        if(totalFrames>=smokeFrames) glfwSetWindowShouldClose(window,true);
+                    }
                 }
             }
         }
     }
+    private static java.awt.image.BufferedImage dx12Hud(String status) {
+        var image=new java.awt.image.BufferedImage(960,660,java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        var g=image.createGraphics();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING,java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(new java.awt.Color(8,15,24,210));g.fillRoundRect(18,12,924,68,18,18);
+        g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF,java.awt.Font.BOLD,22));g.setColor(java.awt.Color.WHITE);g.drawString(status,36,42);
+        g.setFont(new java.awt.Font(java.awt.Font.SANS_SERIF,java.awt.Font.PLAIN,15));g.drawString("1–7: Stein einwerfen · WASD: Bewegen · Maus: Umsehen · ESC: Grafikmenü",36,66);
+        g.dispose();return image;
+    }
     private boolean triggered(int key,boolean[] held,int slot) {
         boolean pressed=glfwGetKey(window,key)==GLFW_PRESS,result=pressed&&!held[slot];held[slot]=pressed;return result;
+    }
+    private static void limitFrame(double started,int limit) {
+        if(limit<=0||Boolean.getBoolean("pt.benchmark")) return;
+        long remaining=(long)((1.0/limit-(glfwGetTime()-started))*1_000_000_000L);
+        if(remaining>0) java.util.concurrent.locks.LockSupport.parkNanos(remaining);
     }
     private void captureMouse(Camera camera,int width,int height) {
         glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);glfwSetCursorPos(window,width/2.0,height/2.0);

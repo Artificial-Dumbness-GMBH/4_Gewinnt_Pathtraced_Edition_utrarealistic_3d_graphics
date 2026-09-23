@@ -1,0 +1,45 @@
+name: Publish DX12 preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/dx12-rendering-settings]
+    paths: [.github/workflows/publish-dx12.yml]
+permissions:
+  contents: read
+concurrency:
+  group: publish-dx12-preview-2026-09-23
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: Artificial-Dumbness-GMBH/4_Gewinnt_Pathtraced_Edition_utrarealistic_3d_graphics
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify the tested Windows package
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GH_REPO/actions/artifacts/10771188930" > artifact.json
+          jq -e '.expired == false and .workflow_run.head_sha == "10dd01f92febc5b15b87cba847920d29fe85baa1"' artifact.json
+          mkdir -p dist
+          gh api "repos/$GH_REPO/actions/artifacts/10771188930/zip" > dist/4Gewinnt-DX12-Windows-x64.zip
+          cd dist
+          printf '%s  %s\n' '7e3a9166bee478aace4e329646811520663bc0607093880ed7fc4ea56481f1c7' '4Gewinnt-DX12-Windows-x64.zip' > 4Gewinnt-DX12-Windows-x64.zip.sha256
+          sha256sum --check 4Gewinnt-DX12-Windows-x64.zip.sha256
+          unzip -tq 4Gewinnt-DX12-Windows-x64.zip
+          unzip -p 4Gewinnt-DX12-Windows-x64.zip package-verification.txt | grep '^PASS:'
+      - name: Publish the preview release
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create dx12-preview-2026-09-23 \
+            dist/4Gewinnt-DX12-Windows-x64.zip dist/4Gewinnt-DX12-Windows-x64.zip.sha256 \
+            --target 10dd01f92febc5b15b87cba847920d29fe85baa1 \
+            --title "4 Gewinnt DX12 – Windows-EXE Preview" \
+            --prerelease --latest=false --notes-file docs/dx12-preview-release.md

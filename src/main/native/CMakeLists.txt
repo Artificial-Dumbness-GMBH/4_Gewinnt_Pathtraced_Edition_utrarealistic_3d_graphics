@@ -1,16 +1,47 @@
 cmake_minimum_required(VERSION 3.20)
 project(viergewinnt_dx12 LANGUAGES CXX)
-
-find_package(Java REQUIRED COMPONENTS Development)
-
-get_filename_component(JAVA_HOME "${Java_JAVA_EXECUTABLE}" DIRECTORY)
-get_filename_component(JAVA_HOME "${JAVA_HOME}" DIRECTORY)
-
-add_library(viergewinnt_dx12 SHARED dx12_bridge.cpp)
-target_include_directories(viergewinnt_dx12 PRIVATE
-    "${JAVA_HOME}/include"
-    "${JAVA_HOME}/include/win32")
+if(NOT WIN32)
+    message(FATAL_ERROR "The DX12 bridge targets Windows. OpenGL remains cross-platform.")
+endif()
+find_package(JNI REQUIRED)
+find_program(DXC_EXECUTABLE NAMES dxc REQUIRED)
+set(FSR_ROOT "" CACHE PATH "FidelityFX SDK v2.2.0 root (optional)")
+set(XESS_ROOT "" CACHE PATH "XeSS SDK v3.0.2 root (optional)")
+function(compile_shader name file entry model)
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${name}.h"
+        COMMAND "${DXC_EXECUTABLE}" -T "${model}" -E "${entry}" -HV 2021 -O3
+            ${ARGN} -Fh "${CMAKE_CURRENT_BINARY_DIR}/${name}.h" -Vn "${name}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${file}"
+        DEPENDS "shaders/${file}" shaders/common.hlsli VERBATIM)
+    set(SHADER_HEADERS ${SHADER_HEADERS} "${CMAKE_CURRENT_BINARY_DIR}/${name}.h" PARENT_SCOPE)
+endfunction()
+compile_shader(trace_sw trace.hlsl main cs_6_0)
+compile_shader(trace_hw trace.hlsl main cs_6_5 -D HARDWARE_RT=1)
+foreach(pass denoise temporal history tonemap composite)
+    compile_shader(${pass} post.hlsl ${pass} cs_6_0)
+endforeach()
+add_library(viergewinnt_dx12 SHARED dx12_bridge.cpp dx12_renderer.cpp ${SHADER_HEADERS})
+target_include_directories(viergewinnt_dx12 PRIVATE ${JNI_INCLUDE_DIRS} "${CMAKE_CURRENT_BINARY_DIR}")
 target_compile_features(viergewinnt_dx12 PRIVATE cxx_std_17)
-target_link_libraries(viergewinnt_dx12 PRIVATE d3d12 dxgi d3dcompiler)
-target_link_options(viergewinnt_dx12 PRIVATE -static -static-libgcc -static-libstdc++)
+target_compile_definitions(viergewinnt_dx12 PRIVATE UNICODE _UNICODE)
+target_link_libraries(viergewinnt_dx12 PRIVATE d3d12 dxgi dxguid)
+if(MSVC)
+    set_property(TARGET viergewinnt_dx12 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(viergewinnt_dx12 PRIVATE /W4 /EHsc /utf-8)
+elseif(MINGW)
+    target_compile_options(viergewinnt_dx12 PRIVATE -Wall -Wextra)
+    target_link_options(viergewinnt_dx12 PRIVATE -static)
+endif()
+if(FSR_ROOT)
+    target_compile_definitions(viergewinnt_dx12 PRIVATE PT_FSR)
+    target_include_directories(viergewinnt_dx12 PRIVATE "${FSR_ROOT}/Kits/FidelityFX/api/include" "${FSR_ROOT}/Kits/FidelityFX/upscalers/include")
+    add_custom_command(TARGET viergewinnt_dx12 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${FSR_ROOT}/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
+endif()
+if(XESS_ROOT)
+    target_compile_definitions(viergewinnt_dx12 PRIVATE PT_XESS)
+    target_include_directories(viergewinnt_dx12 PRIVATE "${XESS_ROOT}/inc")
+    add_custom_command(TARGET viergewinnt_dx12 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${XESS_ROOT}/bin/libxess.dll" "${XESS_ROOT}/bin/libxess_fg.dll" "${XESS_ROOT}/bin/libxell.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
+endif()
 set_target_properties(viergewinnt_dx12 PROPERTIES PREFIX "" OUTPUT_NAME viergewinnt_dx12)

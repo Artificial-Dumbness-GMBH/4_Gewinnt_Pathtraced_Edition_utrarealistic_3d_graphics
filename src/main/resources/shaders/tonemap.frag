@@ -3,7 +3,7 @@ in vec2 uv;
 out vec4 color;
 uniform sampler2D image;
 uniform int paused,sampleCount,denoise;
-uniform float denoiseStrength,exposure;
+uniform float denoiseStrength,exposure,sharpness;
 uniform sampler2D normalDepth,albedoGuide;
 float luminance(vec3 value) {
     return dot(value,vec3(.2126,.7152,.0722));
@@ -30,6 +30,12 @@ void main() {
     // Fade filtering as convergence improves so fine grain is retained.
     float strength=denoise==0?0:.85/(1+float(sampleCount)*.015);
     vec3 hdr=max(mix(center,filtered/max(totalWeight,1e-8),strength),vec3(0));
+    if(sharpness>0&&denoise==0) {
+        vec2 texel=1.0/vec2(size);
+        vec3 blur=(texture(image,uv+vec2(texel.x,0)).rgb+texture(image,uv-vec2(texel.x,0)).rgb
+                  +texture(image,uv+vec2(0,texel.y)).rgb+texture(image,uv-vec2(0,texel.y)).rgb)*.25;
+        hdr=max(hdr+sharpness*(center-blur),vec3(0));
+    }
     // Filmic highlight shoulder, applied exactly once in linear light.
     hdr*=exposure;
     vec3 mapped=clamp((hdr*(2.51*hdr+.03))/(hdr*(2.43*hdr+.59)+.14),0,1);
