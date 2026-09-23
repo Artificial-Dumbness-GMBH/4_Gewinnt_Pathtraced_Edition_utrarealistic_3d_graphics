@@ -86,7 +86,7 @@ public final class MenuSettingsTest {
                 check(SettingsStore.load(file).equals(low),"low resolution persistence");
             }
             SettingsStore.save(file,custom);
-            String saved=Files.readString(file);Files.writeString(file,saved.replace("taa=false\n",""));
+            String saved=Files.readString(file);Files.writeString(file,saved.replaceAll("(?m)^taa=false\\r?\\n",""));
             check(SettingsStore.load(file).equals(custom.withTaa(true)),"legacy settings migration");
             Files.writeString(file,"bounces=garbage\n");check(SettingsStore.load(file).equals(defaults),"corrupt settings recovery");
             check(SettingsStore.load(directory.resolve("absent")).equals(defaults),"first run");
