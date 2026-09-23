@@ -1,245 +1,63 @@
-#include <windows.h>
-#include <d3d12.h>
-#include <d3dcompiler.h>
-#include <dxgi1_6.h>
+#include "dx12_renderer.h"
 #include <jni.h>
-#include <wrl.h>
-
-#include <string>
-#include <vector>
-#include <cstring>
-
-using Microsoft::WRL::ComPtr;
-
-struct Backend {
-    ComPtr<IDXGIAdapter1> adapter;
-    ComPtr<ID3D12Device> device;
-    ComPtr<ID3D12CommandQueue> queue;
-    ComPtr<IDXGISwapChain4> swapChain;
-    ComPtr<ID3D12DescriptorHeap> rtvHeap;
-    ComPtr<ID3D12RootSignature> rootSignature;
-    ComPtr<ID3D12PipelineState> pipeline;
-    ComPtr<ID3D12CommandAllocator> allocator;
-    ComPtr<ID3D12GraphicsCommandList> commandList;
-    ComPtr<ID3D12Fence> fence;
-    std::vector<ComPtr<ID3D12Resource>> buffers;
-    HANDLE fenceEvent=nullptr;
-    UINT64 fenceValue=0;
-    UINT rtvStride=0;
-    UINT bufferCount=0;
-    UINT width=0;
-    UINT height=0;
-    bool raytracingSupported=false;
-};
-
-static bool create_test_pipeline(Backend& backend);
-
-static bool wait_for_gpu(Backend& backend) {
-    if(!backend.queue||!backend.fence||!backend.fenceEvent) return false;
-    const UINT64 value=++backend.fenceValue;
-    if(FAILED(backend.queue->Signal(backend.fence.Get(),value))) return false;
-    const UINT64 completed=backend.fence->GetCompletedValue();
-    if(completed==UINT64_MAX) return false; // Device removed, not successful completion.
-    if(completed<value) {
-        if(FAILED(backend.fence->SetEventOnCompletion(value,backend.fenceEvent))) return false;
-        if(WaitForSingleObject(backend.fenceEvent,10000)!=WAIT_OBJECT_0) return false;
-    }
-    return true;
+static Backend& backend(jlong h) { if(!h) throw std::runtime_error("Closed DX12 backend");return *reinterpret_cast<Backend*>(h); }
+static void report(JNIEnv* env,const std::exception& e) {
+    if(!env->ExceptionCheck()) env->ThrowNew(env->FindClass("java/lang/IllegalStateException"),e.what());
 }
-
-static bool create_targets(Backend& backend) {
-    if(!backend.device||!backend.swapChain||!backend.rtvHeap) return false;
-    backend.buffers.clear();backend.buffers.resize(backend.bufferCount);
-    auto handle=backend.rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    for(UINT index=0;index<backend.bufferCount;++index) {
-        if(FAILED(backend.swapChain->GetBuffer(index,IID_PPV_ARGS(&backend.buffers[index])))) return false;
-        backend.device->CreateRenderTargetView(backend.buffers[index].Get(),nullptr,handle);
-        handle.ptr+=backend.rtvStride;
-    }
-    return true;
+#define JNI_METHOD(name) Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_##name
+extern "C" JNIEXPORT jlong JNICALL JNI_METHOD(create)(JNIEnv* env,jclass,jboolean debug) {
+    try { auto b=std::make_unique<Backend>();b->init(debug);return reinterpret_cast<jlong>(b.release()); }catch(const std::exception& e) { report(env,e);return 0; }
 }
-
-static bool create_backend(Backend& backend) {
-    ComPtr<IDXGIFactory6> factory;
-    if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)))) return false;
-    for(UINT index=0;;++index) {
-        ComPtr<IDXGIAdapter1> candidate;
-        const HRESULT enumerated=factory->EnumAdapterByGpuPreference(index,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                IID_PPV_ARGS(&candidate));
-        if(enumerated==DXGI_ERROR_NOT_FOUND) break;
-        if(FAILED(enumerated)||!candidate) return false;
-        DXGI_ADAPTER_DESC1 description{};
-        if(FAILED(candidate->GetDesc1(&description))) return false;
-        if(description.Flags&DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        if(SUCCEEDED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,
-                IID_PPV_ARGS(&backend.device)))) {
-            D3D12_COMMAND_QUEUE_DESC queueDescription{};
-            queueDescription.Type=D3D12_COMMAND_LIST_TYPE_DIRECT;
-            if(FAILED(backend.device->CreateCommandQueue(&queueDescription,
-                IID_PPV_ARGS(&backend.queue)))) return false;
-            D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
-            if(SUCCEEDED(backend.device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5,
-                &options5,sizeof(options5))))
-            backend.raytracingSupported=options5.RaytracingTier>=D3D12_RAYTRACING_TIER_1_0;
-            backend.adapter=candidate;
-            return true;
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(destroy)(JNIEnv*,jclass,jlong h) { delete reinterpret_cast<Backend*>(h); }
+extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(adapterName)(JNIEnv* env,jclass,jlong h) {
+    try { DXGI_ADAPTER_DESC1 d{};checked(backend(h).adapter->GetDesc1(&d),"Adapter name");return env->NewString(reinterpret_cast<const jchar*>(d.Description),jsize(wcslen(d.Description))); }catch(const std::exception& e) { report(env,e);return nullptr; }
+}
+extern "C" JNIEXPORT jint JNICALL JNI_METHOD(capabilities)(JNIEnv* env,jclass,jlong h) {
+    try { auto& b=backend(h);return (b.dxr?1:0)|(b.vendor.fsrAvailable()?2:0)|(b.vendor.xessAvailable()?4:0)|(1<<8); }catch(const std::exception& e) { report(env,e);return 0; }
+}
+extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(status)(JNIEnv* env,jclass,jlong h) {
+    try { return env->NewStringUTF(backend(h).info.c_str()); }catch(const std::exception& e) { report(env,e);return nullptr; }
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(attach)(JNIEnv* env,jclass,jlong h,jlong window,jint w,jint height) {
+    try { if(!window||w<1||height<1) throw std::runtime_error("Invalid window");backend(h).attach(reinterpret_cast<HWND>(window),UINT(w),UINT(height)); }catch(const std::exception& e) { report(env,e); }
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(resize)(JNIEnv* env,jclass,jlong h,jint w,jint height) {
+    try { if(w>0&&height>0) backend(h).resize(UINT(w),UINT(height)); }catch(const std::exception& e) { report(env,e); }
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(configure)(JNIEnv* env,jclass,jlong h,jintArray ints,jfloatArray floats) {
+    try {
+        if(!ints||!floats||env->GetArrayLength(ints)!=12||env->GetArrayLength(floats)!=3) throw std::runtime_error("Invalid settings ABI");
+        int v[12];float f[3];env->GetIntArrayRegion(ints,0,12,v);env->GetFloatArrayRegion(floats,0,3,f);if(env->ExceptionCheck()) return;
+        if(v[0]<0||v[0]>2||v[1]<0||v[1]>2||v[2]<0||v[2]>3||v[3]<0||v[3]>2||v[4]<1||v[4]>12||v[5]<1||v[5]>16
+            ||v[6]<64||v[6]>3840||v[7]<64||v[7]>2160||v[8]<1||v[8]>5||v[9]<0||v[9]>1||v[10]<0||v[10]>1||v[11]<1||v[11]>4
+            ||!std::isfinite(f[0])||f[0]<.25f||f[0]>3||!std::isfinite(f[1])||f[1]<.25f||f[1]>2||!std::isfinite(f[2])||f[2]<0||f[2]>1) throw std::runtime_error("Invalid settings");
+        auto& b=backend(h);if(!b.width||!b.height) throw std::runtime_error("Attach window before configure");b.configure(v,f);
+    }catch(const std::exception& e) { report(env,e); }
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(setScene)(JNIEnv* env,jclass,jlong h,jobjectArray buffers,jint moving) {
+    try {
+        if(!buffers||env->GetArrayLength(buffers)!=4) throw std::runtime_error("Invalid scene ABI");
+        std::array<const void*,4> data{};std::array<size_t,4> sizes{};std::array<jobject,4> refs{};const int strides[]={16,16,48,48};
+        for(int i=0;i<4;i++) {
+            refs[i]=env->GetObjectArrayElement(buffers,i);if(!refs[i]) throw std::runtime_error("Null scene buffer");
+            auto size=env->GetDirectBufferCapacity(refs[i]);data[i]=env->GetDirectBufferAddress(refs[i]);
+            if(!data[i]||size<=0||size%strides[i]!=0||size>256*1024*1024) throw std::runtime_error("Invalid direct scene buffer");
+            sizes[i]=size;
         }
-    }
-    return false;
+        if(moving<-1||(moving>=0&&size_t(moving)>=sizes[0]/16)) throw std::runtime_error("Invalid moving vertex");
+        const UINT* tri=static_cast<const UINT*>(data[1]);
+        for(size_t i=0;i<sizes[1]/4;i+=4) if(tri[i]>=sizes[0]/16||tri[i+1]>=sizes[0]/16||tri[i+2]>=sizes[0]/16||tri[i+3]>=sizes[2]/48) throw std::runtime_error("Invalid triangle indices");
+        backend(h).scene(data,sizes,moving);
+        for(auto r:refs) env->DeleteLocalRef(r);
+    }catch(const std::exception& e) { report(env,e); }
 }
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_available(JNIEnv*,jclass) {
-    Backend backend;
-    return create_backend(backend) ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_create(JNIEnv*,jclass) {
-    auto* backend=new Backend();
-    if(!create_backend(*backend)) { delete backend;return 0; }
-    return reinterpret_cast<jlong>(backend);
-}
-
-extern "C" JNIEXPORT jstring JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_adapterName(JNIEnv* env,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->adapter) return env->NewStringUTF("");
-    DXGI_ADAPTER_DESC1 description{};
-    if(FAILED(backend->adapter->GetDesc1(&description))) return env->NewStringUTF("");
-    return env->NewString(reinterpret_cast<const jchar*>(description.Description),
-        static_cast<jsize>(wcslen(description.Description)));
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_destroy(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(backend) { if(backend->fenceEvent) wait_for_gpu(*backend);if(backend->fenceEvent) CloseHandle(backend->fenceEvent);delete backend; }
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_raytracingSupported(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    return backend&&backend->raytracingSupported ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_createSwapChain(JNIEnv*,jclass,jlong handle,
-        jlong windowHandle,jint width,jint height) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->queue||windowHandle==0||width<=0||height<=0) return JNI_FALSE;
-    ComPtr<IDXGIFactory4> factory;
-    if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 description{};
-    description.Width=static_cast<UINT>(width);description.Height=static_cast<UINT>(height);
-    description.Format=DXGI_FORMAT_R8G8B8A8_UNORM;description.BufferCount=2;
-    description.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;description.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
-    description.SampleDesc.Count=1;
-    ComPtr<IDXGISwapChain1> swapChain;
-    if(FAILED(factory->CreateSwapChainForHwnd(backend->queue.Get(),reinterpret_cast<HWND>(windowHandle),
-            &description,nullptr,nullptr,&swapChain))) return JNI_FALSE;
-    if(FAILED(swapChain.As(&backend->swapChain))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 actual{};backend->swapChain->GetDesc1(&actual);
-    D3D12_DESCRIPTOR_HEAP_DESC heapDescription{};
-    heapDescription.NumDescriptors=actual.BufferCount;heapDescription.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    if(FAILED(backend->device->CreateDescriptorHeap(&heapDescription,IID_PPV_ARGS(&backend->rtvHeap)))) return JNI_FALSE;
-    backend->rtvStride=backend->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    backend->bufferCount=actual.BufferCount;
-    backend->width=actual.Width;backend->height=actual.Height;
-        if(FAILED(backend->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-            IID_PPV_ARGS(&backend->allocator)))) return JNI_FALSE;
-        if(FAILED(backend->device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,backend->allocator.Get(),
-            nullptr,IID_PPV_ARGS(&backend->commandList)))) return JNI_FALSE;
-        if(FAILED(backend->commandList->Close())) return JNI_FALSE;
-        if(FAILED(backend->device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&backend->fence)))) return JNI_FALSE;
-        backend->fenceEvent=CreateEventW(nullptr,FALSE,FALSE,nullptr);
-        if(!backend->fenceEvent||!create_targets(*backend)||!create_test_pipeline(*backend)) return JNI_FALSE;
-        return JNI_TRUE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_resizeSwapChain(JNIEnv*,jclass,jlong handle,
-        jint width,jint height) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->swapChain||width<=0||height<=0) return JNI_FALSE;
-    if(!wait_for_gpu(*backend)) return JNI_FALSE;
-    backend->buffers.clear();
-    backend->rtvHeap.Reset();
-    if(FAILED(backend->swapChain->ResizeBuffers(0,static_cast<UINT>(width),static_cast<UINT>(height),
-            DXGI_FORMAT_UNKNOWN,0))) return JNI_FALSE;
-    DXGI_SWAP_CHAIN_DESC1 actual{};backend->swapChain->GetDesc1(&actual);backend->bufferCount=actual.BufferCount;
-    backend->width=actual.Width;backend->height=actual.Height;
-    D3D12_DESCRIPTOR_HEAP_DESC heapDescription{};
-    heapDescription.NumDescriptors=backend->bufferCount;heapDescription.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    if(FAILED(backend->device->CreateDescriptorHeap(&heapDescription,IID_PPV_ARGS(&backend->rtvHeap)))) return JNI_FALSE;
-    return create_targets(*backend) ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_clear(JNIEnv*,jclass,jlong handle,
-        jfloat red,jfloat green,jfloat blue,jfloat alpha) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    if(!backend||!backend->swapChain||!backend->allocator||!backend->commandList) return JNI_FALSE;
-    const UINT index=backend->swapChain->GetCurrentBackBufferIndex();
-    if(index>=backend->buffers.size()||FAILED(backend->allocator->Reset())) return JNI_FALSE;
-    if(FAILED(backend->commandList->Reset(backend->allocator.Get(),nullptr))) return JNI_FALSE;
-    D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrier.Transition.pResource=backend->buffers[index].Get();barrier.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_RENDER_TARGET;
-    backend->commandList->ResourceBarrier(1,&barrier);
-    auto target=backend->rtvHeap->GetCPUDescriptorHandleForHeapStart();target.ptr+=index*backend->rtvStride;
-    const FLOAT color[]={red,green,blue,alpha};backend->commandList->ClearRenderTargetView(target,color,0,nullptr);
-    D3D12_VIEWPORT viewport{0,0,static_cast<FLOAT>(backend->width),static_cast<FLOAT>(backend->height),0,1};
-    D3D12_RECT scissor{0,0,static_cast<LONG>(backend->width),static_cast<LONG>(backend->height)};
-    backend->commandList->RSSetViewports(1,&viewport);backend->commandList->RSSetScissorRects(1,&scissor);
-    backend->commandList->SetPipelineState(backend->pipeline.Get());backend->commandList->SetGraphicsRootSignature(backend->rootSignature.Get());
-    backend->commandList->OMSetRenderTargets(1,&target,FALSE,nullptr);
-    backend->commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    backend->commandList->DrawInstanced(3,1,0,0);
-    barrier.Transition.StateBefore=D3D12_RESOURCE_STATE_RENDER_TARGET;barrier.Transition.StateAfter=D3D12_RESOURCE_STATE_PRESENT;
-    backend->commandList->ResourceBarrier(1,&barrier);
-    if(FAILED(backend->commandList->Close())) return JNI_FALSE;
-    ID3D12CommandList* lists[]={backend->commandList.Get()};backend->queue->ExecuteCommandLists(1,lists);
-    return wait_for_gpu(*backend) ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_present(JNIEnv*,jclass,jlong handle) {
-    auto* backend=reinterpret_cast<Backend*>(handle);
-    return backend&&backend->swapChain&&SUCCEEDED(backend->swapChain->Present(1,0)) ? JNI_TRUE : JNI_FALSE;
-}
-
-static bool create_test_pipeline(Backend& backend) {
-    static const char* source=R"(
-struct Output { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
-Output vs(uint id : SV_VertexID) {
-    float2 positions[3] = { float2(-1,-1), float2(-1,3), float2(3,-1) };
-    Output output; output.position=float4(positions[id],0,1); output.uv=positions[id]*0.5+0.5; return output;
-}
-float4 ps(Output input) : SV_TARGET {
-    float3 top=float3(0.04,0.22,0.58), bottom=float3(0.01,0.03,0.10);
-    float3 color=lerp(bottom,top,input.uv.y);
-    float grid=(step(0.98,frac(input.uv.x*12))+step(0.98,frac(input.uv.y*8)))*0.12;
-    return float4(color+grid,1);
-}
-)";
-    ComPtr<ID3DBlob> vertex,fragment,errors;
-    if(FAILED(D3DCompile(source,strlen(source),"dx12_test.hlsl",nullptr,nullptr,"vs","vs_5_0",
-            D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&vertex,&errors))) return false;
-    if(FAILED(D3DCompile(source,strlen(source),"dx12_test.hlsl",nullptr,nullptr,"ps","ps_5_0",
-            D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&fragment,&errors))) return false;
-    D3D12_ROOT_SIGNATURE_DESC rootDescription{};
-    rootDescription.Flags=D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
-    ComPtr<ID3DBlob> serializedRoot;
-    if(FAILED(D3D12SerializeRootSignature(&rootDescription,D3D_ROOT_SIGNATURE_VERSION_1,
-            &serializedRoot,&errors))) return false;
-    if(FAILED(backend.device->CreateRootSignature(0,serializedRoot->GetBufferPointer(),serializedRoot->GetBufferSize(),
-            IID_PPV_ARGS(&backend.rootSignature)))) return false;
-    D3D12_RASTERIZER_DESC rasterizer{};rasterizer.FillMode=D3D12_FILL_MODE_SOLID;rasterizer.CullMode=D3D12_CULL_MODE_NONE;rasterizer.DepthClipEnable=TRUE;
-    D3D12_BLEND_DESC blend{};blend.RenderTarget[0].RenderTargetWriteMask=D3D12_COLOR_WRITE_ENABLE_ALL;
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline{};pipeline.pRootSignature=backend.rootSignature.Get();
-    pipeline.VS={vertex->GetBufferPointer(),vertex->GetBufferSize()};pipeline.PS={fragment->GetBufferPointer(),fragment->GetBufferSize()};
-    pipeline.RasterizerState=rasterizer;pipeline.BlendState=blend;pipeline.PrimitiveTopologyType=D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pipeline.NumRenderTargets=1;pipeline.RTVFormats[0]=DXGI_FORMAT_R8G8B8A8_UNORM;pipeline.SampleDesc.Count=1;
-    return SUCCEEDED(backend.device->CreateGraphicsPipelineState(&pipeline,IID_PPV_ARGS(&backend.pipeline)));
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(render)(JNIEnv* env,jclass,jlong h,jfloatArray camera,jfloat lift,jfloat ms,jobject ui,jint mode) {
+    try {
+        if(!camera||env->GetArrayLength(camera)!=16||!std::isfinite(lift)||!std::isfinite(ms)||mode<0||mode>2) throw std::runtime_error("Invalid frame ABI");
+        float c[16];env->GetFloatArrayRegion(camera,0,16,c);if(env->ExceptionCheck()) return;
+        for(float f:c) if(!std::isfinite(f)) throw std::runtime_error("Invalid camera");
+        const void* bytes=ui?env->GetDirectBufferAddress(ui):nullptr;
+        if(mode!=0&&(!bytes||env->GetDirectBufferCapacity(ui)!=960*660*4)) throw std::runtime_error("Invalid UI buffer");
+        backend(h).render(c,lift,std::clamp(ms,.1f,1000.f),bytes,mode);
+    }catch(const std::exception& e) { report(env,e); }
 }
