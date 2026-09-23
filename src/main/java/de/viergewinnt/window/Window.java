@@ -219,6 +219,7 @@ public class Window {
             boolean paused=false,escapeHeld=false,mouseHeld=false;
             {
                 backend.applySettings(settings);backend.setScene(Scene.fromBoard(game.getBoard()));
+                menu.capabilities(backend.capabilities());menu.rendererStatus(backend.status());
                 dx12Started=true;
                 System.out.println("DX12: "+backend.status());
                 while(!glfwWindowShouldClose(window)) {
@@ -226,6 +227,7 @@ public class Window {
                     glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);
                     if(width[0]<=0||height[0]<=0||windowWidth[0]<=0||windowHeight[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
                     if(width[0]!=renderWidth||height[0]!=renderHeight) { backend.resize(width[0],height[0]);renderWidth=width[0];renderHeight=height[0]; }
+                    backend.beginFrame();
                     boolean wasPaused=paused;
                     boolean escape=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
                     if(escape&&!escapeHeld) {
@@ -254,7 +256,7 @@ public class Window {
                             case RESTART -> { drop.cancel();game.reset();backend.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
                             case QUIT -> glfwSetWindowShouldClose(window,true);
                             case SETTINGS -> {
-                                backend.applySettings(menu.settings());menu.capabilities(backend.capabilities());
+                                backend.applySettings(menu.settings());menu.capabilities(backend.capabilities());menu.rendererStatus(backend.status());
                                 try { SettingsStore.save(SettingsStore.defaultPath(),menu.settings());menu.saved(true); }
                                 catch(java.io.IOException|SecurityException e) { menu.saved(false);System.err.println("Einstellungen nicht gespeichert: "+e.getMessage()); }
                             }
@@ -277,10 +279,12 @@ public class Window {
                     }
                     overlayWasMenu=paused;
                     backend.render(camera,dt,paused?1:2);frames++;totalFrames++;
+                    menu.capabilities(backend.capabilities());
                     limitFrame(now,menu.settings().graphics().frameLimit());
                     if(now-titleTime>=1) {
                         String state=paused?"PAUSE":HUD.getStatusText(game);
                         String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | DX12 | %.1f FPS | %s | %s | ESC: Menü",frames/(now-titleTime),backend.status(),state);
+                        menu.rendererStatus(backend.status());
                         glfwSetWindowTitle(window,title);if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
                         frames=0;titleTime=now;
                     }

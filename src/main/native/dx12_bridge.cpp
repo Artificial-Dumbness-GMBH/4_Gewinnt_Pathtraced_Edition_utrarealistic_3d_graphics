@@ -13,10 +13,13 @@ extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(adapterName)(JNIEnv* env,jclass,
     try { DXGI_ADAPTER_DESC1 d{};checked(backend(h).adapter->GetDesc1(&d),"Adapter name");return env->NewString(reinterpret_cast<const jchar*>(d.Description),jsize(wcslen(d.Description))); }catch(const std::exception& e) { report(env,e);return nullptr; }
 }
 extern "C" JNIEXPORT jint JNICALL JNI_METHOD(capabilities)(JNIEnv* env,jclass,jlong h) {
-    try { auto& b=backend(h);return (b.dxr?1:0)|(b.vendor.fsrAvailable()?2:0)|(b.vendor.xessAvailable()?4:0)|(1<<8); }catch(const std::exception& e) { report(env,e);return 0; }
+    try { auto& b=backend(h);return (b.dxr?1:0)|(b.vendor.fsrAvailable()?2:0)|(b.vendor.xessAvailable()?4:0)|(b.frameGeneration.maxMultiplier()<<8); }catch(const std::exception& e) { report(env,e);return 0; }
 }
 extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(status)(JNIEnv* env,jclass,jlong h) {
-    try { return env->NewStringUTF(backend(h).info.c_str()); }catch(const std::exception& e) { report(env,e);return nullptr; }
+    try { auto& b=backend(h);return env->NewStringUTF((b.info+" | "+b.frameGeneration.status()).c_str()); }catch(const std::exception& e) { report(env,e);return nullptr; }
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(beginFrame)(JNIEnv* env,jclass,jlong h) {
+    try { backend(h).frameGeneration.begin(); }catch(const std::exception& e) { report(env,e); }
 }
 extern "C" JNIEXPORT void JNICALL JNI_METHOD(attach)(JNIEnv* env,jclass,jlong h,jlong window,jint w,jint height) {
     try { if(!window||w<1||height<1) throw std::runtime_error("Invalid window");backend(h).attach(reinterpret_cast<HWND>(window),UINT(w),UINT(height)); }catch(const std::exception& e) { report(env,e); }

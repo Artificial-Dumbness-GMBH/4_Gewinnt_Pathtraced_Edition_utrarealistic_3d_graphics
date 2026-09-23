@@ -420,6 +420,13 @@
             <configuration><mainClass>${exec.mainClass}</mainClass></configuration>
             <executions>
                 <execution>
+                    <id>native-scene-regression</id><phase>test</phase><goals><goal>java</goal></goals>
+                    <configuration>
+                        <mainClass>de.viergewinnt.renderer.NativeSceneTest</mainClass>
+                        <classpathScope>test</classpathScope>
+                    </configuration>
+                </execution>
+                <execution>
                     <id>bvh-regression</id><phase>test</phase><goals><goal>java</goal></goals>
                     <configuration>
                         <mainClass>de.viergewinnt.bvh.BVHTest</mainClass>

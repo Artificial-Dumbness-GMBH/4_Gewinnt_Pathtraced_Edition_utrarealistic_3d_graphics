@@ -21,11 +21,13 @@ public final class PauseMenu {
     private RenderSettings settings;
     private RenderCapabilities capabilities=RenderCapabilities.openGL();
     private int page;
+    private String rendererStatus="";
     private boolean graphics,dirty=true;
     private String focus="",status="",saveStatus="Änderungen werden automatisch gespeichert";
     public PauseMenu(RenderSettings settings) { this.settings=settings; }
     public RenderSettings settings() { return settings; }
     public void capabilities(RenderCapabilities value) { if(!capabilities.equals(value)) { capabilities=value;dirty=true; } }
+    public void rendererStatus(String value) { if(!rendererStatus.equals(value)) { rendererStatus=value;dirty=true; } }
     public boolean isGraphics() { return graphics; }
     public void open(String gameStatus) { graphics=false;focus="resume";status=gameStatus;dirty=true; }
     public boolean back() { if(!graphics) return false;graphics=false;focus="graphics";dirty=true;return true; }
@@ -52,12 +54,12 @@ public final class PauseMenu {
             c.add(new Control("quit","Spiel beenden",276,382,640,58,true));
         } else if(page==0) {
             c.add(new Control("denoiser",denoiserLabel(),580,174,336,44,true));
-            c.add(new Control("taa",settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,true));
+            c.add(new Control("taa",upscalerActive()?"Über Upscaler":settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,!upscalerActive()));
             pair(c,"strength",286,settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
                 settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
             pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<12);
             pair(c,"samples",398,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
-            pair(c,"resolution",454,settings.maxWidth()>RESOLUTIONS[0][0],settings.maxWidth()<RESOLUTIONS[RESOLUTIONS.length-1][0]);
+            pair(c,"resolution",454,!upscalerActive()&&settings.maxWidth()>RESOLUTIONS[0][0],!upscalerActive()&&settings.maxWidth()<RESOLUTIONS[RESOLUTIONS.length-1][0]);
             pair(c,"exposure",510,settings.exposure()>.25f,settings.exposure()<3);
             c.add(new Control("defaults","Standardwerte",276,590,200,42,true));
             c.add(new Control("resume","Weiterspielen",716,590,200,42,true));
@@ -189,6 +191,9 @@ public final class PauseMenu {
             for(int i=0;i<labels.length;i++) { text(g,labels[i],276,192+i*56,17,TEXT,true);text(g,descriptions[i],276,214+i*56,12,MUTED,false); }
             text(g,capabilities.dx12()?"Backend: DirectX 12":"Backend: OpenGL · Software-Pathtracing",276,462,15,ACCENT,true);
             if(page==1) text(g,"Deaktivierte Optionen sind auf diesem Backend nicht verfügbar.",276,495,13,MUTED,false);
+            String runtime=rendererStatus.length()>180?rendererStatus.substring(0,180):rendererStatus;
+            text(g,runtime.substring(0,Math.min(90,runtime.length())),276,524,12,MUTED,false);
+            if(runtime.length()>90) text(g,runtime.substring(90),276,545,12,MUTED,false);
             text(g,saveStatus,276,567,12,MUTED,false);
         } else if(graphics) {
             String[] labels={"Denoiser","Kantenglättung","Filterstärke","Path-Bounces","Samples / Frame","Render-Auflösung","Belichtung"};
@@ -198,7 +203,7 @@ public final class PauseMenu {
                 text(g,labels[i],276,y+18,17,TEXT,true);text(g,descriptions[i],276,y+40,12,MUTED,false);
             }
             String[] values={String.format(Locale.ROOT,"%.0f %%",settings.denoiseStrength()*100),Integer.toString(settings.bounces()),
-                Integer.toString(settings.samplesPerFrame()),settings.maxWidth()+" × "+settings.maxHeight(),String.format(Locale.ROOT,"%.2f×",settings.exposure())};
+                Integer.toString(settings.samplesPerFrame()),upscalerActive()?"Automatisch":settings.maxWidth()+" × "+settings.maxHeight(),String.format(Locale.ROOT,"%.2f×",settings.exposure())};
             for(int i=0;i<5;i++) {
                 int y=286+i*56;rounded(g,710,y,154,44,12,new Color(17,27,39));
                 g.setFont(new Font(Font.SANS_SERIF,Font.BOLD,17));int tw=g.getFontMetrics().stringWidth(values[i]);

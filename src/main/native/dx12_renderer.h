@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "vendor_effects.h"
+#include "frame_generation.h"
 #include "trace_sw.h"
 #include "trace_hw.h"
 #include "denoise.h"
@@ -60,10 +61,11 @@ struct Backend {
     int settings[12]{0,0,1,2,3,4,960,540,4,1,1,1};
     float display[3]{1,1,.2f};
     VendorEffects vendor;
+    FrameGeneration frameGeneration;
     std::string info="DX12";
     ~Backend() {
         try { wait(); } catch(...) { }
-        back={};swap.Reset();vendor.destroy();if(event) CloseHandle(event);
+        back={};swap.Reset();frameGeneration.destroy();vendor.destroy();if(event) CloseHandle(event);
     }
     void wait() {
         if(!queue||!fence||!event) return;
@@ -115,6 +117,7 @@ struct Backend {
         for(int i=1;i<6;i++) { params[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;params[i].Descriptor.ShaderRegister=i-1; }
         for(int i=6;i<8;i++) { params[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;params[i].DescriptorTable={1,&ranges[i-6]}; }
         D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.MaxAnisotropy=1;
         D3D12_ROOT_SIGNATURE_DESC rd{};rd.NumParameters=8;rd.pParameters=params;rd.NumStaticSamplers=1;rd.pStaticSamplers=&sampler;
         ComPtr<ID3DBlob> serialized,error;checked(D3D12SerializeRootSignature(&rd,D3D_ROOT_SIGNATURE_VERSION_1,&serialized,&error),"Serialize root");
@@ -134,8 +137,11 @@ struct Backend {
         DXGI_SWAP_CHAIN_DESC1 desc{};desc.Width=w;desc.Height=h;desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;
         desc.BufferCount=2;desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
         desc.Flags=tearing?DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING:0;
-        ComPtr<IDXGISwapChain1> s;checked(factory->CreateSwapChainForHwnd(queue.Get(),window,&desc,nullptr,nullptr,&s),"Create swapchain");
-        checked(s.As(&swap),"Query swapchain");checked(factory->MakeWindowAssociation(window,DXGI_MWA_NO_ALT_ENTER),"Window association");
+        if(!frameGeneration.attach(device.Get(),queue.Get(),factory.Get(),window,desc,swap.GetAddressOf())) {
+            ComPtr<IDXGISwapChain1> s;checked(factory->CreateSwapChainForHwnd(queue.Get(),window,&desc,nullptr,nullptr,&s),"Create swapchain");
+            checked(s.As(&swap),"Query swapchain");
+        }
+        checked(factory->MakeWindowAssociation(window,DXGI_MWA_NO_ALT_ENTER),"Window association");
         width=w;height=h;targets();
     }
     void resize(UINT w,UINT h) {
@@ -176,6 +182,7 @@ struct Backend {
         }
         if(changed||effectChanged) { historyValid=false;accumulation=0; }
         if(settings[0]!=values[0]) accelerationBuilt=false;
+        frameGeneration.mode(UINT(values[11]));
         std::memcpy(settings,values,sizeof(settings));std::memcpy(display,floats,sizeof(display));configured=true;
         info=std::string(dxr&&settings[0]!=1?"DXR 1.1":"Software BVH")+" | "+vendor.status();
     }

@@ -30,7 +30,8 @@ if (!$WithoutVendorSDKs) {
         Download "$fsrBase/$file" "$fsrDirectory/$file"
     }
     $xessBase = "https://raw.githubusercontent.com/intel/xess/v3.0.2"
-    foreach ($file in @("inc/xess/xess.h", "inc/xess/xess_d3d12.h", "bin/libxess.dll", "LICENSE.txt")) {
+    foreach ($file in @("inc/xess/xess.h", "inc/xess/xess_d3d12.h", "inc/xess_fg/xefg_swapchain.h", "inc/xess_fg/xefg_swapchain_d3d12.h",
+        "inc/xell/xell.h", "inc/xell/xell_d3d12.h", "bin/libxess.dll", "bin/libxess_fg.dll", "bin/libxell.dll", "LICENSE.txt")) {
         Download "$xessBase/$file" "$xessDirectory/$file"
     }
     $configure += @("-DFSR_ROOT=$fsrDirectory", "-DXESS_ROOT=$xessDirectory")

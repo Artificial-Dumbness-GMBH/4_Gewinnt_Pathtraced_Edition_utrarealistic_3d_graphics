@@ -32,6 +32,7 @@ void Backend::acceleration(float lift) {
 }
 void Backend::render(const float* camera,float lift,float milliseconds,const void* ui,int uiMode) {
     if(!configured||!triangleCount) throw std::runtime_error("Scene/settings not initialized");
+    frameGeneration.marker(1);
     bool moved=lift!=previousLift||sceneDirty;
     // PreviousCamera.w stores jitter; compare basis xyz only.
     for(int v=0;v<4;v++) for(int i=0;i<3;i++) moved|=previousCamera[v*4+i]!=camera[v*4+i];
@@ -77,13 +78,15 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
         to.pResource=textures[13].resource.Get();to.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;list->CopyTextureRegion(&to,0,0,0,&from,nullptr);transition(13,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     transition(12,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(6,c,width,height);transition(12,D3D12_RESOURCE_STATE_COPY_SOURCE);
+    frameGeneration.tag(list.Get(),textures[11].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),camera,renderWidth,renderHeight,jx,jy,milliseconds,reset);
     auto target=back[swap->GetCurrentBackBufferIndex()].Get();
     D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=target;b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     b.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;b.Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;list->ResourceBarrier(1,&b);
     list->CopyResource(target,textures[12].resource.Get());std::swap(b.Transition.StateBefore,b.Transition.StateAfter);list->ResourceBarrier(1,&b);
-    checked(list->Close(),"Close frame");ID3D12CommandList* lists[]={list.Get()};queue->ExecuteCommandLists(1,lists);
+    checked(list->Close(),"Close frame");ID3D12CommandList* lists[]={list.Get()};frameGeneration.marker(2);queue->ExecuteCommandLists(1,lists);frameGeneration.marker(3);
+    frameGeneration.marker(4);
     HRESULT presented=swap->Present(settings[10]?1:0,!settings[10]&&tearing?DXGI_PRESENT_ALLOW_TEARING:0);
-    wait();checked(presented,"Present");
+    frameGeneration.marker(5);wait();checked(presented,"Present");frameGeneration.presented();
     std::memcpy(previousCamera,camera,16*sizeof(float));previousCamera[3]=jx;previousCamera[7]=jy;
     previousLift=lift;historyValid=true;sceneDirty=false;accumulation=std::min(accumulation+1,1000000u);
 }

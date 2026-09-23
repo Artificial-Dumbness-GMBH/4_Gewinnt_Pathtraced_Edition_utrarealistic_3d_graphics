@@ -39,6 +39,7 @@ public final class DirectX12Backend implements AutoCloseable {
         checkOpen();NativeScene data=NativeScene.from(scene);Native.setScene(handle,data.buffers(),data.movingVertexStart());lift=0;
     }
     public void setDropLift(float value) { lift=value; }
+    public void beginFrame() { checkOpen();Native.beginFrame(handle); }
     public void overlay(BufferedImage image) {
         if(image.getWidth()!=960||image.getHeight()!=660) throw new IllegalArgumentException("Overlay must be 960x660");
         overlay.clear();
@@ -71,6 +72,7 @@ public final class DirectX12Backend implements AutoCloseable {
         private static native void configure(long handle,int[] settings,float[] display);
         private static native void setScene(long handle,ByteBuffer[] buffers,int movingStart);
         private static native void render(long handle,float[] camera,float lift,float ms,ByteBuffer ui,int mode);
+        private static native void beginFrame(long handle);
         private static native void destroy(long handle);
     }
 }

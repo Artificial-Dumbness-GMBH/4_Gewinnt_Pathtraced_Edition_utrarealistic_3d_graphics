@@ -41,6 +41,6 @@ if(XESS_ROOT)
     target_compile_definitions(viergewinnt_dx12 PRIVATE PT_XESS)
     target_include_directories(viergewinnt_dx12 PRIVATE "${XESS_ROOT}/inc")
     add_custom_command(TARGET viergewinnt_dx12 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${XESS_ROOT}/bin/libxess.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
+        "${XESS_ROOT}/bin/libxess.dll" "${XESS_ROOT}/bin/libxess_fg.dll" "${XESS_ROOT}/bin/libxell.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
 endif()
 set_target_properties(viergewinnt_dx12 PROPERTIES PREFIX "" OUTPUT_NAME viergewinnt_dx12)

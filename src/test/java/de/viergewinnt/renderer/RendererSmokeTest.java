@@ -49,6 +49,12 @@ public class RendererSmokeTest {
     glFinish();if(glGetError()!=GL_NO_ERROR) throw new AssertionError("denoiser switch GL error");
    }
    pt.applySettings(original.withTaa(false));pt.renderPauseOverlay(80,50);
+   for(int passes=1;passes<=5;passes++) {
+    pt.applySettings(original.withGraphics(original.graphics().withPasses(passes).withSharpness(passes*.2f)));
+    pt.renderPauseOverlay(80,50);glFinish();
+    if(glGetError()!=GL_NO_ERROR||pt.samples()!=accumulated) throw new AssertionError("live filter passes/sharpness");
+   }
+   pt.applySettings(original.withTaa(false));pt.renderPauseOverlay(80,50);
    if(pt.samples()!=accumulated) throw new AssertionError("TAA toggle discarded raw samples");
    pt.applySettings(original.withTaa(true));pt.renderPauseOverlay(80,50);
    if(pt.samples()!=accumulated) throw new AssertionError("TAA enable discarded raw samples");

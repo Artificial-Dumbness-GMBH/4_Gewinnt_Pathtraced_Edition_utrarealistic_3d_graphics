@@ -1,0 +1,32 @@
+name: DX12 and Java build
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [dx12]
+  push:
+    branches: [dx12, codex/dx12-rendering-settings]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Java regression tests
+        run: mvn --batch-mode test
+      - name: DX12 with FSR and XeSS
+        shell: pwsh
+        run: ./build-dx12.ps1
+      - name: DX12 without vendor SDKs
+        shell: pwsh
+        run: ./build-dx12.ps1 -WithoutVendorSDKs -BuildDirectory target/dx12-basic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dx12-windows-native
+          path: target/dx12/Release/
