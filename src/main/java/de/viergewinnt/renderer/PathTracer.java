@@ -73,7 +73,8 @@ public final class PathTracer implements AutoCloseable {
     public void applySettings(RenderSettings next) {
         java.util.Objects.requireNonNull(next);
         if(!settings.sameSampling(next)) reset();
-        if(settings.denoiser()!=next.denoiser()||settings.denoiseStrength()!=next.denoiseStrength()||settings.taa()!=next.taa()) {
+        if(settings.denoiser()!=next.denoiser()||settings.denoiseStrength()!=next.denoiseStrength()||settings.taa()!=next.taa()
+                ||settings.graphics().denoisePasses()!=next.graphics().denoisePasses()) {
             displayDirty=true;temporal.reset();
         }
         settings=next;
@@ -134,7 +135,7 @@ public final class PathTracer implements AutoCloseable {
     private void present(int w,int h,boolean paused) {
         if(displayDirty) {
             displayTexture=settings.denoiser()==RenderSettings.Denoiser.ATROUS
-                ?atrous.filter(texture,normalDepth,albedoGuide,width,height,lastCamera,samples(),settings.denoiseStrength()):texture;
+                ?atrous.filter(texture,normalDepth,albedoGuide,width,height,lastCamera,samples(),settings.denoiseStrength(),settings.graphics().denoisePasses()):texture;
             if(settings.taa()) displayTexture=temporal.resolve(displayTexture,normalDepth,albedoGuide,width,height,lastCamera,frameIndex);
             displayDirty=false;
         }

@@ -113,6 +113,7 @@ public class Window {
             Game game=new Game(board);
             DropAnimation drop=new DropAnimation();
             RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
+            glfwSwapInterval(!Boolean.getBoolean("pt.benchmark")&&settings.graphics().vsync()?1:0);
             PauseMenu menu=new PauseMenu(settings);
             int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];
             double[] cursorX=new double[1],cursorY=new double[1];
@@ -154,6 +155,7 @@ public class Window {
                             case QUIT -> glfwSetWindowShouldClose(window,true);
                             case SETTINGS -> {
                                 tracer.applySettings(menu.settings());
+                                glfwSwapInterval(!Boolean.getBoolean("pt.benchmark")&&menu.settings().graphics().vsync()?1:0);
                                 try { SettingsStore.save(SettingsStore.defaultPath(),menu.settings());menu.saved(true); }
                                 catch(java.io.IOException|SecurityException e) { menu.saved(false);System.err.println("Einstellungen nicht gespeichert: "+e.getMessage()); }
                             }
@@ -173,6 +175,7 @@ public class Window {
                     hologram.render(game,camera,tracer.depthGuideTexture(),width[0],height[0],(float)(now%3600),paused);
                     if(paused) menuRenderer.render(menu,width[0],height[0]);
                     glfwSwapBuffers(window);frames++;totalFrames++;
+                    limitFrame(now,menu.settings().graphics().frameLimit());
                     if(now-titleTime>=1) {
                         String state=paused?"PAUSE":HUD.getStatusText(game);
                         String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | ESC: Menü",frames/(now-titleTime),tracer.samples(),state);
@@ -219,6 +222,11 @@ public class Window {
     }
     private boolean triggered(int key,boolean[] held,int slot) {
         boolean pressed=glfwGetKey(window,key)==GLFW_PRESS,result=pressed&&!held[slot];held[slot]=pressed;return result;
+    }
+    private static void limitFrame(double started,int limit) {
+        if(limit<=0||Boolean.getBoolean("pt.benchmark")) return;
+        long remaining=(long)((1.0/limit-(glfwGetTime()-started))*1_000_000_000L);
+        if(remaining>0) java.util.concurrent.locks.LockSupport.parkNanos(remaining);
     }
     private void captureMouse(Camera camera,int width,int height) {
         glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);glfwSetCursorPos(window,width/2.0,height/2.0);

@@ -55,11 +55,32 @@ public final class MenuSettingsTest {
         menu.open("Rot");check(menu.activateFocused()==PauseMenu.Action.RESUME,"keyboard focus");
         menu.focusNext(1);check(menu.activateFocused()==PauseMenu.Action.RESTART,"keyboard traversal");
         check(menu.image(1).getWidth()==PauseMenu.WIDTH,"menu rasterization");
+        click(menu,"display");
+        click(menu,"vsync");click(menu,"frameLimit");click(menu,"passes");click(menu,"sharpness");
+        check(!menu.settings().graphics().vsync()&&menu.settings().graphics().frameLimit()==30,"display options");
+        check(menu.settings().graphics().denoisePasses()==5,"filter pass count");
+        check(menu.settings().withExposure(2).graphics().equals(menu.settings().graphics()),"legacy setters preserve advanced options");
+        check(defaults.sameSampling(defaults.withGraphics(menu.settings().graphics())),"display options should not discard samples");
+        click(menu,"pipeline");
+        check(click(menu,"raytracing")==PauseMenu.Action.NONE&&click(menu,"upscaler")==PauseMenu.Action.NONE,"unavailable features disabled");
+        menu.capabilities(new RenderCapabilities(true,true,true,true,4));
+        check(click(menu,"raytracing")==PauseMenu.Action.SETTINGS,"DX12 RT control");
+        check(click(menu,"upscaler")==PauseMenu.Action.SETTINGS&&menu.settings().graphics().upscaler()==GraphicsOptions.Upscaler.FSR,"FSR selection");
+        click(menu,"quality");click(menu,"frameGeneration");
+        check(menu.settings().graphics().frameGeneration()==2,"frame generation control");
+        menu.capabilities(RenderCapabilities.openGL());
+        click(menu,"frameGeneration");click(menu,"upscaler");
+        check(menu.settings().graphics().frameGeneration()==1&&menu.settings().graphics().upscaler()==GraphicsOptions.Upscaler.OFF,"unsupported saved options can be disabled");
+        check(menu.image(1).getHeight()==PauseMenu.HEIGHT,"pipeline rasterization");
+        try { GraphicsOptions.defaults().withSharpness(Float.NaN);throw new AssertionError("NaN accepted"); }
+        catch(IllegalArgumentException expected) { }
         check(Camera.isWalkable(10,10)&&!Camera.isWalkable(0,0)&&!Camera.isWalkable(22,0)&&!Camera.isWalkable(0,26),"room/table collisions");
         Files.createDirectories(Path.of("target"));Path directory=Files.createTempDirectory(Path.of("target"),"settings-test-");Path file=directory.resolve("render.properties");
         try {
             RenderSettings custom=defaults.withDenoiser(RenderSettings.Denoiser.OWN).withBounces(6).withSamples(8).withExposure(1.5f).withTaa(false);
             SettingsStore.save(file,custom);check(SettingsStore.load(file).equals(custom),"settings round trip");
+            RenderSettings advanced=custom.withGraphics(menu.settings().graphics());
+            SettingsStore.save(file,advanced);check(SettingsStore.load(file).equals(advanced),"advanced settings round trip");
             for(int[] resolution:new int[][]{{124,70},{213,120}}) {
                 RenderSettings low=custom.withResolution(resolution[0],resolution[1]);SettingsStore.save(file,low);
                 check(SettingsStore.load(file).equals(low),"low resolution persistence");
