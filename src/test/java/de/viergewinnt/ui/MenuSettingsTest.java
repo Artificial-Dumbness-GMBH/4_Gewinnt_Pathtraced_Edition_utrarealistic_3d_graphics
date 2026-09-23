@@ -19,7 +19,12 @@ public final class MenuSettingsTest {
         check(click(menu,"taa")==PauseMenu.Action.SETTINGS&&!menu.settings().taa(),"TAA off");
         check(click(menu,"taa")==PauseMenu.Action.SETTINGS&&menu.settings().taa(),"TAA on");
         check(defaults.sameSampling(defaults.withTaa(false)),"TAA discarded raw samples");
-        for(int i=0;i<20;i++) click(menu,"bounces+");check(menu.settings().bounces()==8,"bounce upper bound");
+        for(int i=0;i<20;i++) click(menu,"bounces+");check(menu.settings().bounces()==12,"bounce upper bound");
+        check(PauseMenu.scale(1,1)>0,"minimized panel scale");
+        var minus=menu.controls().stream().filter(c->c.id().equals("bounces-")).findFirst().orElseThrow();
+        menu.hover(minus.x()+2,minus.y()+2);
+        for(int i=0;i<11;i++) menu.activateFocused();
+        check(menu.settings().bounces()==1&&menu.activateFocused()==PauseMenu.Action.NONE,"stale disabled keyboard focus");
         for(int i=0;i<20;i++) click(menu,"bounces-");check(menu.settings().bounces()==1,"bounce lower bound");
         click(menu,"samples+");check(menu.settings().samplesPerFrame()==8,"sample step");
         click(menu,"resolution+");check(menu.settings().maxWidth()==1280,"resolution step");

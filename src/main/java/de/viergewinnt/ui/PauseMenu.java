@@ -27,7 +27,7 @@ public final class PauseMenu {
     public void saved(boolean success) { saveStatus=success?"Gespeichert · Änderungen wirken sofort":"Nur für diese Sitzung · Speichern fehlgeschlagen";dirty=true; }
     public boolean takeDirty() { boolean result=dirty;dirty=false;return result; }
     public static float scale(int framebufferWidth,int framebufferHeight) {
-        return Math.min((framebufferWidth-24f)/WIDTH,(framebufferHeight-24f)/HEIGHT);
+        return Math.max(.001f,Math.min((framebufferWidth-24f)/WIDTH,(framebufferHeight-24f)/HEIGHT));
     }
     public static double[] panelPoint(double cursorX,double cursorY,int windowWidth,int windowHeight,int framebufferWidth,int framebufferHeight) {
         if(windowWidth<=0||windowHeight<=0||framebufferWidth<=24||framebufferHeight<=24) return new double[]{-1,-1};
@@ -48,7 +48,7 @@ public final class PauseMenu {
             c.add(new Control("taa",settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,true));
             pair(c,"strength",286,settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
                 settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
-            pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<8);
+            pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<12);
             pair(c,"samples",398,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
             pair(c,"resolution",454,settings.maxWidth()>RESOLUTIONS[0][0],settings.maxWidth()<RESOLUTIONS[RESOLUTIONS.length-1][0]);
             pair(c,"exposure",510,settings.exposure()>.25f,settings.exposure()<3);
@@ -76,6 +76,7 @@ public final class PauseMenu {
     }
     public Action activateFocused() { return activate(focus); }
     private Action activate(String id) {
+        if(controls().stream().noneMatch(c->c.enabled&&c.id.equals(id))) return Action.NONE;
         if(id.equals("resume")) return Action.RESUME;
         if(id.equals("restart")) return Action.RESTART;
         if(id.equals("quit")) return Action.QUIT;
@@ -85,7 +86,7 @@ public final class PauseMenu {
         if(id.equals("denoiser")) settings=settings.withDenoiser(RenderSettings.Denoiser.values()[(settings.denoiser().ordinal()+1)%3]);
         else if(id.equals("taa")) settings=settings.withTaa(!settings.taa());
         else if(id.startsWith("strength")) settings=settings.withStrength(clamp(settings.denoiseStrength()+sign*.25f,.25f,2));
-        else if(id.startsWith("bounces")) settings=settings.withBounces(Math.max(1,Math.min(8,settings.bounces()+sign)));
+        else if(id.startsWith("bounces")) settings=settings.withBounces(Math.max(1,Math.min(12,settings.bounces()+sign)));
         else if(id.startsWith("samples")) settings=settings.withSamples(nextValue(SAMPLES,settings.samplesPerFrame(),sign));
         else if(id.startsWith("resolution")) {
             int[] widths=java.util.Arrays.stream(RESOLUTIONS).mapToInt(r->r[0]).toArray();int width=nextValue(widths,settings.maxWidth(),sign);

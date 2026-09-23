@@ -12,5 +12,7 @@ target_include_directories(viergewinnt_dx12 PRIVATE
     "${JAVA_HOME}/include/win32")
 target_compile_features(viergewinnt_dx12 PRIVATE cxx_std_17)
 target_link_libraries(viergewinnt_dx12 PRIVATE d3d12 dxgi d3dcompiler)
-target_link_options(viergewinnt_dx12 PRIVATE -static -static-libgcc -static-libstdc++)
+if(MINGW)
+    target_link_options(viergewinnt_dx12 PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
 set_target_properties(viergewinnt_dx12 PROPERTIES PREFIX "" OUTPUT_NAME viergewinnt_dx12)

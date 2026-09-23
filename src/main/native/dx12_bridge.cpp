@@ -38,9 +38,11 @@ static bool wait_for_gpu(Backend& backend) {
     if(!backend.queue||!backend.fence||!backend.fenceEvent) return false;
     const UINT64 value=++backend.fenceValue;
     if(FAILED(backend.queue->Signal(backend.fence.Get(),value))) return false;
-    if(backend.fence->GetCompletedValue()<value) {
+    const UINT64 completed=backend.fence->GetCompletedValue();
+    if(completed==UINT64_MAX) return false; // Device removed, not successful completion.
+    if(completed<value) {
         if(FAILED(backend.fence->SetEventOnCompletion(value,backend.fenceEvent))) return false;
-        WaitForSingleObject(backend.fenceEvent,INFINITE);
+        if(WaitForSingleObject(backend.fenceEvent,10000)!=WAIT_OBJECT_0) return false;
     }
     return true;
 }
@@ -62,10 +64,12 @@ static bool create_backend(Backend& backend) {
     if(FAILED(CreateDXGIFactory2(0,IID_PPV_ARGS(&factory)))) return false;
     for(UINT index=0;;++index) {
         ComPtr<IDXGIAdapter1> candidate;
-        if(factory->EnumAdapterByGpuPreference(index,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                IID_PPV_ARGS(&candidate))==DXGI_ERROR_NOT_FOUND) break;
+        const HRESULT enumerated=factory->EnumAdapterByGpuPreference(index,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                IID_PPV_ARGS(&candidate));
+        if(enumerated==DXGI_ERROR_NOT_FOUND) break;
+        if(FAILED(enumerated)||!candidate) return false;
         DXGI_ADAPTER_DESC1 description{};
-        candidate->GetDesc1(&description);
+        if(FAILED(candidate->GetDesc1(&description))) return false;
         if(description.Flags&DXGI_ADAPTER_FLAG_SOFTWARE) continue;
         if(SUCCEEDED(D3D12CreateDevice(candidate.Get(),D3D_FEATURE_LEVEL_12_0,
                 IID_PPV_ARGS(&backend.device)))) {
@@ -102,11 +106,9 @@ Java_de_viergewinnt_renderer_DirectX12Backend_00024Native_adapterName(JNIEnv* en
     auto* backend=reinterpret_cast<Backend*>(handle);
     if(!backend||!backend->adapter) return env->NewStringUTF("");
     DXGI_ADAPTER_DESC1 description{};
-    backend->adapter->GetDesc1(&description);
-    int length=WideCharToMultiByte(CP_UTF8,0,description.Description,-1,nullptr,0,nullptr,nullptr);
-    std::string name(length>0?length-1:0,'\0');
-    if(length>0) WideCharToMultiByte(CP_UTF8,0,description.Description,-1,name.data(),length-1,nullptr,nullptr);
-    return env->NewStringUTF(name.c_str());
+    if(FAILED(backend->adapter->GetDesc1(&description))) return env->NewStringUTF("");
+    return env->NewString(reinterpret_cast<const jchar*>(description.Description),
+        static_cast<jsize>(wcslen(description.Description)));
 }
 
 extern "C" JNIEXPORT void JNICALL

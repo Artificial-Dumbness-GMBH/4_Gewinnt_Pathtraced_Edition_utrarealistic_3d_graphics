@@ -84,6 +84,7 @@ public class Window {
                     createDirectX12();
                     return;
                 } catch(RuntimeException|UnsatisfiedLinkError e) {
+                    if(window!=0) { Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0; }
                     System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
                 }
             }
