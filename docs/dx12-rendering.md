@@ -1,5 +1,20 @@
 # DX12-Renderer: Build, Funktionen und Prüfstatus
 
+## Startbare Windows-EXE
+
+Der Windows-Workflow erstellt zusätzlich das Download-Artefakt
+**4Gewinnt-DX12-Windows-x64**. Das ZIP vollständig entpacken und
+**4Gewinnt-DX12.exe** starten. Die Ordner `app` und `runtime` müssen neben der
+EXE bleiben; Java und Maven werden auf dem Spielrechner nicht benötigt.
+Der Launcher wählt DX12 ausdrücklich und zeigt Startfehler statt eines stillen
+OpenGL-Fallbacks. Das Protokoll liegt unter `%USERPROFILE%/.viergewinnt/dx12.log`.
+
+Lokal erstellt `./package-dx12.ps1` dasselbe portable Anwendungspaket mittels
+JDK-`jpackage`. Die EXE ist nicht digital signiert. Der Pakettest startet die EXE
+aus einem verschobenen Ordner mit Leerzeichen, prüft die mitgelieferte JVM,
+Java-Abhängigkeiten, Ressourcen und das Laden der nativen DLLs. Er erzeugt
+keinen Grafikadapter und bestätigt deshalb keine DX12-GPU-Funktion.
+
 ## Windows-Build
 
 Benötigt werden Windows 10/11 x64, JDK 25, Maven, CMake und Visual Studio 2022

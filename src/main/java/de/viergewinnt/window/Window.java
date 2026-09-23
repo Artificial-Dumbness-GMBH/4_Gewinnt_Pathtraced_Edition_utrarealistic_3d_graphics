@@ -86,7 +86,7 @@ public class Window {
                     return;
                 } catch(RuntimeException|UnsatisfiedLinkError e) {
                     if(window!=0) { Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0; }
-                    if(dx12Started) throw e; // Do not silently restart a game after a runtime GPU failure.
+                    if(dx12Started||Boolean.getBoolean("pt.requireDx12")) throw e; // Packaged DX12 launcher must not silently select OpenGL.
                     System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
                 }
             }

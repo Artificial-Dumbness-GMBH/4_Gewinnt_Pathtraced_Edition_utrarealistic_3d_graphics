@@ -30,3 +30,11 @@ jobs:
         with:
           name: dx12-windows-native
           path: target/dx12/Release/
+      - name: Build and verify portable DX12 EXE
+        shell: pwsh
+        run: ./package-dx12.ps1 -SkipNativeBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 4Gewinnt-DX12-Windows-x64
+          path: target/windows-package/output/4Gewinnt-DX12/
+          if-no-files-found: error
