@@ -1,13 +1,20 @@
 package de.viergewinnt.window;
 
 import org.lwjgl.glfw.Callbacks;
+import static org.lwjgl.glfw.GLFW.GLFW_CLIENT_API;
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MAJOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CONTEXT_VERSION_MINOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_DISABLED;
 import static org.lwjgl.glfw.GLFW.GLFW_CURSOR_NORMAL;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_DOWN;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER;
 import static org.lwjgl.glfw.GLFW.GLFW_KEY_ESCAPE;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_LEFT_SHIFT;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_TAB;
+import static org.lwjgl.glfw.GLFW.GLFW_KEY_UP;
 import static org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT;
+import static org.lwjgl.glfw.GLFW.GLFW_NO_API;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_CORE_PROFILE;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_DEBUG_CONTEXT;
 import static org.lwjgl.glfw.GLFW.GLFW_OPENGL_FORWARD_COMPAT;
@@ -23,6 +30,7 @@ import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 import static org.lwjgl.glfw.GLFW.glfwGetKey;
 import static org.lwjgl.glfw.GLFW.glfwGetMouseButton;
 import static org.lwjgl.glfw.GLFW.glfwGetTime;
+import static org.lwjgl.glfw.GLFW.glfwGetWindowSize;
 import static org.lwjgl.glfw.GLFW.glfwInit;
 import static org.lwjgl.glfw.GLFW.glfwMakeContextCurrent;
 import static org.lwjgl.glfw.GLFW.glfwPollEvents;
@@ -38,6 +46,7 @@ import static org.lwjgl.glfw.GLFW.glfwWaitEventsTimeout;
 import static org.lwjgl.glfw.GLFW.glfwWindowHint;
 import static org.lwjgl.glfw.GLFW.glfwWindowShouldClose;
 import org.lwjgl.glfw.GLFWErrorCallback;
+import static org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window;
 import org.lwjgl.opengl.GL;
 import static org.lwjgl.opengl.GL11.GL_NO_ERROR;
 import static org.lwjgl.opengl.GL11.GL_RENDERER;
@@ -47,12 +56,19 @@ import static org.lwjgl.opengl.GL11.glGetError;
 import static org.lwjgl.opengl.GL11.glGetString;
 
 import de.viergewinnt.Game.Board;
+import de.viergewinnt.Game.DropAnimation;
 import de.viergewinnt.Game.Game;
 import de.viergewinnt.hud.HUD;
+import de.viergewinnt.hud.HologramRenderer;
 import de.viergewinnt.input.Input;
+import de.viergewinnt.renderer.DirectX12Backend;
 import de.viergewinnt.renderer.PathTracer;
+import de.viergewinnt.renderer.RenderSettings;
+import de.viergewinnt.renderer.SettingsStore;
 import de.viergewinnt.scene.Camera;
 import de.viergewinnt.scene.Scene;
+import de.viergewinnt.ui.MenuRenderer;
+import de.viergewinnt.ui.PauseMenu;
 
 public class Window {
     private long window;
@@ -63,6 +79,14 @@ public class Window {
         glfwSetErrorCallback(error);
         try {
             if(!glfwInit()) throw new IllegalStateException("GLFW konnte nicht initialisiert werden.");
+            if("dx12".equalsIgnoreCase(System.getProperty("pt.backend","opengl"))) {
+                try {
+                    createDirectX12();
+                    return;
+                } catch(RuntimeException|UnsatisfiedLinkError e) {
+                    System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
+                }
+            }
             glfwDefaultWindowHints();
             glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,4);glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,6);
             glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT,GLFW_TRUE);
@@ -84,77 +108,74 @@ public class Window {
             System.out.println("GPU: "+renderer+" | Hersteller: "+vendor+" | OpenGL: "+version);
             glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
             Camera camera=new Camera();
-            boolean[] dropKeys=new boolean[Board.COLUMNS];
-            Game game = new Game();
-            int[] width=new int[1],height=new int[1];double last=glfwGetTime(),titleTime=last;int frames=0;
-            int smokeFrames=Integer.getInteger("pt.smokeFrames",0),totalFrames=0;
-            boolean paused=false;
-            boolean escapeHeld=false;
-            boolean mouseHeld=false;
-            try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()))) {
+            boolean[] dropKeys=new boolean[Board.COLUMNS],menuKeys=new boolean[4];
+            Game game=new Game(board);
+            DropAnimation drop=new DropAnimation();
+            RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
+            PauseMenu menu=new PauseMenu(settings);
+            int[] width=new int[1],height=new int[1],windowWidth=new int[1],windowHeight=new int[1];
+            double[] cursorX=new double[1],cursorY=new double[1];
+            double last=glfwGetTime(),titleTime=last,lastMouseX=Double.NaN,lastMouseY=Double.NaN;
+            int frames=0,totalFrames=0,smokeFrames=Integer.getInteger("pt.smokeFrames",0);
+            boolean paused=false,escapeHeld=false,mouseHeld=false;
+            try(PathTracer tracer=new PathTracer(Scene.fromBoard(game.getBoard()),settings);MenuRenderer menuRenderer=new MenuRenderer();HologramRenderer hologram=new HologramRenderer()) {
+                System.out.println("Shader precision: "+tracer.precisionDescription());
                 while(!glfwWindowShouldClose(window)) {
                     glfwPollEvents();double now=glfwGetTime();float dt=(float)(now-last);last=now;
-                    boolean escapePressed=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
-                    if(escapePressed && !escapeHeld) {
-                        paused = !paused;
-                        if(paused) {
-                            glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
-                        } else {
-                            glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
-                            glfwSetCursorPos(window, width[0] / 2.0, height[0] / 2.0);
-                            camera.resetMouseCursor(width[0] / 2.0, height[0] / 2.0);
+                    glfwGetWindowSize(window,windowWidth,windowHeight);glfwGetFramebufferSize(window,width,height);
+                    if(width[0]<=0||height[0]<=0||windowWidth[0]<=0||windowHeight[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
+                    boolean wasPaused=paused;
+                    boolean escape=glfwGetKey(window,GLFW_KEY_ESCAPE)==GLFW_PRESS;
+                    if(escape&&!escapeHeld) {
+                        if(!(paused&&menu.back())) {
+                            paused=!paused;
+                            if(paused) {
+                                menu.open(HUD.getStatusText(game));glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
+                                lastMouseX=Double.NaN;lastMouseY=Double.NaN;
+                            } else captureMouse(camera,windowWidth[0],windowHeight[0]);
                         }
                     }
-                    escapeHeld=escapePressed;
-                    boolean cameraChanged = false;
-                    if(!paused) {
-                        cameraChanged = camera.update(window,dt);
-                        if(cameraChanged) {
-                            tracer.reset();
-                        }
-                    }
-
-                    if(!paused && !game.isGameOver()) {
-                        int column = Input.getTriggeredColumn(window, dropKeys);
-                        if(column >= 0 && game.play(column)) {
-                            tracer.setScene(Scene.fromBoard(game.getBoard()));
-                        }
-                    }
-
-                    glfwGetFramebufferSize(window,width,height);
-                    if(width[0]<=0||height[0]<=0) { glfwWaitEventsTimeout(.05);continue; }
-                    boolean mousePressed=glfwGetMouseButton(window,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
-                    if(paused&&mousePressed&&!mouseHeld) {
-                        double[] cursorX=new double[1],cursorY=new double[1];
+                    escapeHeld=escape;
+                    int column=Input.getTriggeredColumn(window,dropKeys); // Track releases even while paused.
+                    boolean tab=triggered(GLFW_KEY_TAB,menuKeys,0),enter=triggered(GLFW_KEY_ENTER,menuKeys,1);
+                    boolean up=triggered(GLFW_KEY_UP,menuKeys,2),down=triggered(GLFW_KEY_DOWN,menuKeys,3);
+                    boolean mouse=glfwGetMouseButton(window,GLFW_MOUSE_BUTTON_LEFT)==GLFW_PRESS;
+                    if(paused) {
                         glfwGetCursorPos(window,cursorX,cursorY);
-                        double normalizedX=cursorX[0]/width[0],normalizedY=1.0-cursorY[0]/height[0];
-                        double menuX=(normalizedX-.5)*1.7778,menuY=normalizedY-.5;
-                        if(menuX>=-.28&&menuX<=.28&&menuY>=-.16&&menuY<=-.06) {
-                            paused=false;
-                            glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);
-                            glfwSetCursorPos(window,width[0]/2.0,height[0]/2.0);
-                            camera.resetMouseCursor(width[0]/2.0,height[0]/2.0);
-                        } else if(menuX>=-.28&&menuX<=.28&&menuY>=-.27&&menuY<=-.17) {
-                            game.reset();
-                            tracer.setScene(Scene.fromBoard(game.getBoard()));
-                        } else if(menuX>=-.28&&menuX<=.28&&menuY>=-.38&&menuY<=-.28) {
-                            glfwSetWindowShouldClose(window,true);
+                        double[] point=PauseMenu.panelPoint(cursorX[0],cursorY[0],windowWidth[0],windowHeight[0],width[0],height[0]);
+                        if(cursorX[0]!=lastMouseX||cursorY[0]!=lastMouseY) menu.hover(point[0],point[1]);
+                        lastMouseX=cursorX[0];lastMouseY=cursorY[0];
+                        if(tab||up||down) menu.focusNext(up||(tab&&glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS)?-1:1);
+                        PauseMenu.Action action=mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
+                        switch(action) {
+                            case RESUME -> { paused=false;captureMouse(camera,windowWidth[0],windowHeight[0]); }
+                            case RESTART -> { drop.cancel();game.reset();tracer.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
+                            case QUIT -> glfwSetWindowShouldClose(window,true);
+                            case SETTINGS -> {
+                                tracer.applySettings(menu.settings());
+                                try { SettingsStore.save(SettingsStore.defaultPath(),menu.settings());menu.saved(true); }
+                                catch(java.io.IOException|SecurityException e) { menu.saved(false);System.err.println("Einstellungen nicht gespeichert: "+e.getMessage()); }
+                            }
+                            default -> { }
                         }
-                    }
-                    mouseHeld=mousePressed;
-                    if(!paused) {
-                        tracer.render(camera,width[0],height[0]);
                     } else {
-                        tracer.renderPauseOverlay(width[0],height[0]);
+                        camera.update(window,dt); // The tracer detects camera changes itself.
+                        boolean falling=drop.active();
+                        if(drop.advance(game,wasPaused?0:dt)) tracer.setScene(Scene.fromBoard(game.getBoard()));
+                        if(!falling&&column>=0&&drop.start(game,column)) tracer.setScene(Scene.fromBoard(game.getBoard(),drop));
+                        if(drop.active()) tracer.setDropLift(drop.lift());
                     }
+                    mouseHeld=mouse;
+                    if(glfwWindowShouldClose(window)) break;
+                    if(paused) tracer.renderPaused(camera,width[0],height[0]);
+                    else tracer.render(camera,width[0],height[0]);
+                    hologram.render(game,camera,tracer.depthGuideTexture(),width[0],height[0],(float)(now%3600),paused);
+                    if(paused) menuRenderer.render(menu,width[0],height[0]);
                     glfwSwapBuffers(window);frames++;totalFrames++;
                     if(now-titleTime>=1) {
-                        String state = paused ? "PAUSE" : HUD.getStatusText(game);
-                        String title=paused
-                            ? String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | PAUSE",frames/(now-titleTime),tracer.samples())
-                            : String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | WASD + rechte Maus | Tasten 1-7",frames/(now-titleTime),tracer.samples(),state);
-                        glfwSetWindowTitle(window,title);
-                        if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
+                        String state=paused?"PAUSE":HUD.getStatusText(game);
+                        String title=String.format(java.util.Locale.ROOT,"4 Gewinnt | %.1f FPS | %d spp | %s | ESC: Menü",frames/(now-titleTime),tracer.samples(),state);
+                        glfwSetWindowTitle(window,title);if(Boolean.getBoolean("pt.benchmark")) System.out.println(title);
                         frames=0;titleTime=now;
                     }
                     if(smokeFrames>0) {
@@ -167,5 +188,39 @@ public class Window {
             if(window!=0) { Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0; }
             GL.setCapabilities(null);glfwTerminate();glfwSetErrorCallback(null);error.free();
         }
+    }
+
+    private void createDirectX12() {
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);glfwWindowHint(GLFW_RESIZABLE,GLFW_TRUE);
+        window=glfwCreateWindow(1280,720,"4 Gewinnt - DirectX 12",0,0);
+        if(window==0) throw new IllegalStateException("DX12-Fenster konnte nicht erstellt werden.");
+        long nativeWindow=glfwGetWin32Window(window);
+        if(nativeWindow==0) throw new IllegalStateException("Win32-Fensterhandle konnte nicht ermittelt werden.");
+        try(DirectX12Backend backend=new DirectX12Backend()) {
+            System.out.println("DX12 GPU: "+backend.adapterName()+" | DXR: "+backend.raytracingSupported());
+            int[] width=new int[1],height=new int[1];
+            glfwGetFramebufferSize(window,width,height);
+            backend.attachWindow(nativeWindow,Math.max(1,width[0]),Math.max(1,height[0]));
+            int lastWidth=width[0],lastHeight=height[0];
+            int smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",0),frames=0;
+            while(!glfwWindowShouldClose(window)) {
+                glfwPollEvents();glfwGetFramebufferSize(window,width,height);
+                if(width[0]>0&&height[0]>0) {
+                    if(width[0]!=lastWidth||height[0]!=lastHeight) {
+                        backend.resize(width[0],height[0]);lastWidth=width[0];lastHeight=height[0];
+                    }
+                    backend.clear(.025f,.08f,.16f,1f);backend.present();
+                    if(smokeFrames>0&&++frames>=smokeFrames) glfwSetWindowShouldClose(window,true);
+                }
+            }
+        }
+    }
+    private boolean triggered(int key,boolean[] held,int slot) {
+        boolean pressed=glfwGetKey(window,key)==GLFW_PRESS,result=pressed&&!held[slot];held[slot]=pressed;return result;
+    }
+    private void captureMouse(Camera camera,int width,int height) {
+        glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_DISABLED);glfwSetCursorPos(window,width/2.0,height/2.0);
+        camera.resetMouseCursor(width/2.0,height/2.0);
     }
 }

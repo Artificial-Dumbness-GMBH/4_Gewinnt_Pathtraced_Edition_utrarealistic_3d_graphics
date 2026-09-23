@@ -1,0 +1,52 @@
+#version 430 core
+/*
+ * Copyright LWJGL. All rights reserved.
+ * Adapted from lwjgl3-demos tutorial5/atrous.fs.glsl, revision
+ * 0846b5d965e3015c556ac26b802b63f8ea8aa129 (BSD 3-Clause).
+ * Full license and unmodified source: /third-party/lwjgl-atrous/.
+ * Dammertz et al. (2010), Edge-Avoiding A-Trous Wavelet Transform.
+ */
+layout(local_size_x=8,local_size_y=8) in;
+layout(rgba32f,binding=0) writeonly uniform image2D resultImage;
+uniform sampler2D colorMap,normalDepth,albedoGuide;
+uniform int stepwidth,sampleCount;
+uniform float strength;
+uniform vec3 cameraForward,cameraRight,cameraUp;
+const float kernel[5]=float[5](1.0/16,4.0/16,6.0/16,4.0/16,1.0/16);
+vec3 worldOffset(ivec2 p,ivec2 size,float depth) {
+    vec2 q=(vec2(p)+.5)/vec2(size)*2-1;q.x*=float(size.x)/float(size.y);
+    return normalize(cameraForward+.57735026919*(q.x*cameraRight+q.y*cameraUp))*depth;
+}
+void main() {
+    ivec2 tx=ivec2(gl_GlobalInvocationID.xy),size=imageSize(resultImage);
+    if(any(greaterThanEqual(tx,size))) return;
+    vec4 guide=texelFetch(normalDepth,tx,0),albedo=texelFetch(albedoGuide,tx,0);
+    vec3 cval=texelFetch(colorMap,tx,0).rgb,nval=guide.xyz,pval=worldOffset(tx,size,guide.w);
+    vec3 sum=vec3(0);float cum_w=0;
+    float luminance=dot(cval,vec3(.2126,.7152,.0722));
+    float sigma=strength*(.35+max(luminance,0)*.55)/sqrt(1+float(sampleCount)*.006);
+    float c_phi=max(sigma*sigma,.015),n_phi=.025;
+    float footprint=max(.012,guide.w*1.1547/float(size.y));
+    float p_phi=pow(footprint*float(stepwidth)*1.5,2);
+    for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++) {
+        ivec2 q=tx+ivec2(x,y)*stepwidth;
+        if(any(lessThan(q,ivec2(0)))||any(greaterThanEqual(q,size))) continue;
+        vec4 ag=texelFetch(albedoGuide,q,0),ng=texelFetch(normalDepth,q,0);
+        if(ag.a!=albedo.a) continue;
+        vec3 ctmp=texelFetch(colorMap,q,0).rgb,t=cval-ctmp;
+        float c_w=min(exp(-dot(t,t)/c_phi),1.0);
+        t=nval-ng.xyz;
+        // Do not relax normal rejection at large wavelet steps: preserve silhouettes.
+        float n_w=min(exp(-dot(t,t)/n_phi),1.0);
+        t=pval-worldOffset(q,size,ng.w);
+        float planeDistance=dot(t,nval);
+        float p_w=min(exp(-(planeDistance*planeDistance)/max(p_phi,1e-8)),1.0);
+        // Guide texture edges, but never remodulate with an un-antialiased center sample.
+        vec3 albedoDelta=albedo.rgb-ag.rgb;
+        float a_w=exp(-dot(albedoDelta,albedoDelta)/.00015);
+        float weight=c_w*n_w*p_w*a_w*kernel[x+2]*kernel[y+2];
+        sum+=ctmp*weight;cum_w+=weight;
+    }
+    vec3 filtered=sum/max(cum_w,1e-8);
+    imageStore(resultImage,tx,vec4(filtered,1));
+}
