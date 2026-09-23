@@ -1,0 +1,4 @@
+#pragma once
+static const char* pathtraceSource=R"SHADER(@PATHTRACE@)SHADER";
+static const char* presentSource=R"SHADER(@PRESENT@)SHADER";
+static const char* denoiseSource=R"SHADER(@DENOISE@)SHADER";

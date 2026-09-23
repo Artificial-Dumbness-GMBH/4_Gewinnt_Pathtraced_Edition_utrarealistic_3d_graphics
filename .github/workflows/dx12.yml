@@ -1,0 +1,37 @@
+name: DX12 build and shader validation
+on:
+  push:
+    branches: [dx12, 'codex/dx12-*']
+  pull_request:
+    branches: [dx12]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Java regression tests
+        run: mvn --batch-mode test
+      - name: Fetch pinned official SDK headers
+        shell: pwsh
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK.git "$env:RUNNER_TEMP/fsr"
+          git -C "$env:RUNNER_TEMP/fsr" sparse-checkout set Kits/FidelityFX/api/include Kits/FidelityFX/upscalers/include
+          git -C "$env:RUNNER_TEMP/fsr" checkout 60f4ea81909200d8542eca14dccb2628b763a9a3
+          git clone --filter=blob:none --no-checkout https://github.com/intel/xess.git "$env:RUNNER_TEMP/xess"
+          git -C "$env:RUNNER_TEMP/xess" sparse-checkout set inc
+          git -C "$env:RUNNER_TEMP/xess" checkout de0fb9c1c510661c571164e1418ceca8101dab69
+      - name: Configure SDK-enabled native bridge
+        run: cmake -S src/main/native -B target/dx12 -A x64 "-DPT_FSR_SDK=$env:RUNNER_TEMP/fsr" "-DPT_XESS_SDK=$env:RUNNER_TEMP/xess"
+      - name: Compile native bridge
+        run: cmake --build target/dx12 --config Release
+      - name: Compile all HLSL entry points
+        run: ctest --test-dir target/dx12 -C Release --output-on-failure
+      - name: Execute DX12 pathtracing on WARP and validate GPU readback
+        run: mvn --batch-mode compile exec:java "-Dpt.backend=dx12" "-Dpt.dx12.strict=true" "-Dpt.dx12.warp=true" "-Dpt.dx12.library=target/dx12/Release/viergewinnt_dx12.dll" "-Dpt.dx12SmokeFrames=2" "-Dpt.width=64" "-Dpt.height=64" "-Dpt.bounces=1" "-Dpt.samplesPerFrame=1"

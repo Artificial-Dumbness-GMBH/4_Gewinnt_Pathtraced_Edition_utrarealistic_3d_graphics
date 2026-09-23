@@ -81,9 +81,10 @@ public class Window {
             if(!glfwInit()) throw new IllegalStateException("GLFW konnte nicht initialisiert werden.");
             if("dx12".equalsIgnoreCase(System.getProperty("pt.backend","opengl"))) {
                 try {
-                    createDirectX12();
+                    createDirectX12(board);
                     return;
                 } catch(RuntimeException|UnsatisfiedLinkError e) {
+                    if(Boolean.getBoolean("pt.dx12.strict") || !"off".equalsIgnoreCase(System.getProperty("pt.upscaler","off"))) throw e;
                     System.err.println("DX12-Backend fehlgeschlagen, nutze OpenGL-Fallback: "+e.getMessage());
                 }
             }
@@ -190,30 +191,56 @@ public class Window {
         }
     }
 
-    private void createDirectX12() {
+    private void createDirectX12(Board board) {
+        if(!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("windows"))
+            throw new UnsupportedOperationException("DirectX 12 benötigt Windows.");
         glfwDefaultWindowHints();
         glfwWindowHint(GLFW_CLIENT_API,GLFW_NO_API);glfwWindowHint(GLFW_RESIZABLE,GLFW_TRUE);
         window=glfwCreateWindow(1280,720,"4 Gewinnt - DirectX 12",0,0);
         if(window==0) throw new IllegalStateException("DX12-Fenster konnte nicht erstellt werden.");
-        long nativeWindow=glfwGetWin32Window(window);
-        if(nativeWindow==0) throw new IllegalStateException("Win32-Fensterhandle konnte nicht ermittelt werden.");
-        try(DirectX12Backend backend=new DirectX12Backend()) {
-            System.out.println("DX12 GPU: "+backend.adapterName()+" | DXR: "+backend.raytracingSupported());
-            int[] width=new int[1],height=new int[1];
-            glfwGetFramebufferSize(window,width,height);
-            backend.attachWindow(nativeWindow,Math.max(1,width[0]),Math.max(1,height[0]));
-            int lastWidth=width[0],lastHeight=height[0];
-            int smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",0),frames=0;
-            while(!glfwWindowShouldClose(window)) {
-                glfwPollEvents();glfwGetFramebufferSize(window,width,height);
-                if(width[0]>0&&height[0]>0) {
-                    if(width[0]!=lastWidth||height[0]!=lastHeight) {
-                        backend.resize(width[0],height[0]);lastWidth=width[0];lastHeight=height[0];
+        try {
+            long nativeWindow=glfwGetWin32Window(window);
+            RenderSettings settings=SettingsStore.load(SettingsStore.defaultPath()).systemOverrides();
+            try(DirectX12Backend backend=new DirectX12Backend(settings)) {
+                int[] width=new int[1],height=new int[1],ww=new int[1],wh=new int[1];
+                glfwGetFramebufferSize(window,width,height);
+                backend.attachWindow(nativeWindow,Math.max(1,width[0]),Math.max(1,height[0]));
+                Game game=new Game(board);DropAnimation drop=new DropAnimation();Camera camera=new Camera();
+                backend.setScene(Scene.fromBoard(game.getBoard()));
+                System.out.println("DX12 GPU: "+backend.adapterName()+" | DXR capability: "+backend.raytracingSupported()+" | Upscaler: "+backend.upscalerName());
+                System.out.println("DX12 compute pathtracing | 1–7: Einwurf | ESC: Pause | R: Neustart | Q in Pause: Beenden");
+                glfwGetWindowSize(window,ww,wh);captureMouse(camera,ww[0],wh[0]);
+                int lastWidth=width[0],lastHeight=height[0],frames=0;
+                int smokeFrames=Integer.getInteger("pt.dx12SmokeFrames",Integer.getInteger("pt.smokeFrames",0));
+                boolean[] dropKeys=new boolean[Board.COLUMNS],keys=new boolean[3];boolean paused=false;
+                double last=glfwGetTime();
+                while(!glfwWindowShouldClose(window)) {
+                    glfwPollEvents();double now=glfwGetTime();float dt=(float)Math.min(.1,now-last);last=now;
+                    glfwGetFramebufferSize(window,width,height);glfwGetWindowSize(window,ww,wh);
+                    if(width[0]<=0||height[0]<=0) {glfwWaitEventsTimeout(.05);continue;}
+                    if(width[0]!=lastWidth||height[0]!=lastHeight) {backend.resize(width[0],height[0]);lastWidth=width[0];lastHeight=height[0];}
+                    if(triggered(GLFW_KEY_ESCAPE,keys,0)) {
+                        paused=!paused;
+                        if(paused) glfwSetInputMode(window,GLFW_CURSOR,GLFW_CURSOR_NORMAL);
+                        else {captureMouse(camera,ww[0],wh[0]);dt=0;}
                     }
-                    backend.clear(.025f,.08f,.16f,1f);backend.present();
-                    if(smokeFrames>0&&++frames>=smokeFrames) glfwSetWindowShouldClose(window,true);
+                    boolean restart=triggered(org.lwjgl.glfw.GLFW.GLFW_KEY_R,keys,1);
+                    boolean quit=triggered(org.lwjgl.glfw.GLFW.GLFW_KEY_Q,keys,2);
+                    int column=Input.getTriggeredColumn(window,dropKeys);
+                    if(paused&&quit) break;
+                    if(restart) {drop.cancel();game.reset();backend.setScene(Scene.fromBoard(game.getBoard()));}
+                    if(!paused) {
+                        camera.update(window,dt);boolean falling=drop.active();
+                        if(drop.advance(game,dt)) backend.setScene(Scene.fromBoard(game.getBoard()));
+                        if(!falling&&column>=0&&drop.start(game,column)) backend.setScene(Scene.fromBoard(game.getBoard(),drop));
+                    }
+                    backend.render(camera,drop.active()?drop.lift():0,dt,false);
+                    glfwSetWindowTitle(window,"4 Gewinnt | DX12 | "+backend.upscalerName()+" | "+(paused?"PAUSE · ESC weiter · R neu · Q Ende":HUD.getStatusText(game)));
+                    if(smokeFrames>0&&++frames>=smokeFrames) {backend.validateFrame();System.out.println("DX12 smoke passed: finite, nonempty, nonconstant HDR output.");break;}
                 }
             }
+        } finally {
+            Callbacks.glfwFreeCallbacks(window);glfwDestroyWindow(window);window=0;
         }
     }
     private boolean triggered(int key,boolean[] held,int slot) {
