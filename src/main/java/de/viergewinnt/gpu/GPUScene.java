@@ -6,12 +6,15 @@ import java.nio.ByteBuffer;
 import org.lwjgl.system.MemoryUtil;
 import static org.lwjgl.opengl.GL43.*;
 
-/** Owns four immutable SSBOs. std430 strides: vertex 16, triangle 16, material 32, node 48. */
+/** Owns four immutable SSBOs. std430 strides: vertex 16, triangle 16, material 48, node 48. */
 public final class GPUScene implements AutoCloseable {
     private final int[] buffers=new int[4];
-    public final int triangleCount;
+    public final int triangleCount,movingVertexStart;
+    public final float movingMaxLift;
     public GPUScene(Scene scene) {
         BVHData bvh=BVHBuilder.build(scene.mesh);triangleCount=bvh.triangles.length;
+        movingVertexStart=scene.movingVertexStart;movingMaxLift=scene.movingMaxLift;
+        bvh.includeVerticalMotion(movingVertexStart,movingMaxLift);
         try {
             upload(0,Math.multiplyExact(scene.mesh.vertices.size(),16),data->{
                 for(Vec3 v:scene.mesh.vertices) vector(data,v);
@@ -19,11 +22,11 @@ public final class GPUScene implements AutoCloseable {
             upload(1,Math.multiplyExact(triangleCount,16),data->{
                 for(Triangle t:bvh.triangles) data.putInt(t.a).putInt(t.b).putInt(t.c).putInt(t.material);
             });
-            upload(2,Math.multiplyExact(scene.materials.size(),32),data->{
-                for(Material m:scene.materials) { vector(data,m.baseColor);vector(data,m.emission); }
+            upload(2,Math.multiplyExact(scene.materials.size(),48),data->{
+                for(Material m:scene.materials) { vector(data,m.baseColor);vector(data,m.emission);data.putFloat(m.roughness).putFloat(m.metallic).putFloat(m.texture).putFloat(m.textureScale); }
             });
             upload(3,Math.multiplyExact(bvh.nodes.size(),48),data->{
-                for(BVHNode n:bvh.nodes) { vector(data,n.min);vector(data,n.max);data.putInt(n.left).putInt(n.right).putInt(n.first).putInt(n.count); }
+                for(BVHNode n:bvh.nodes) { data.putFloat(n.min.x).putFloat(n.min.y).putFloat(n.min.z).putFloat(n.moving?1:0);vector(data,n.max);data.putInt(n.left).putInt(n.right).putInt(n.first).putInt(n.count); }
             });
         } catch(RuntimeException e) { close();throw e; }
     }

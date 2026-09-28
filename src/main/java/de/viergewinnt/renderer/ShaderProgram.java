@@ -38,6 +38,7 @@ public class ShaderProgram implements AutoCloseable {
     }
     public void use() { glUseProgram(id); }
     private int location(String name) { return locations.computeIfAbsent(name,n->glGetUniformLocation(id,n)); }
+    public void scalar(String name,float value) { glUniform1f(location(name),value); }
     public void integer(String name,int value) { glUniform1i(location(name),value); }
     public void vector(String name,Vec3 v) { glUniform3f(location(name),v.x,v.y,v.z); }
     @Override public void close() { glDeleteProgram(id); }
