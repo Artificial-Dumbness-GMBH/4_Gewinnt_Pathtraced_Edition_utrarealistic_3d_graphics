@@ -248,9 +248,9 @@ void main(uint3 tid:SV_DispatchThreadID) {
         float3 diffuseAlbedo=albedo*(1-metallic);
         // Schlick approximation; the BRDF feature map is deliberately separate from base color.
         float3 specularAlbedo=hit>=0?fresnel(lerp(float3(.04,.04,.04),albedo,metallic),saturate(dot(normal,-guideRay))):0;
-        outputs[14][pixel]=float4(normal,roughness);
+        if(features.w!=0) outputs[14][pixel]=float4(normal,roughness);
         outputs[15][pixel]=float4(diffuseAlbedo,1);outputs[16][pixel]=float4(specularAlbedo,1);
-        outputs[20][pixel]=float4(octNormal(normal),roughness,0);
+        if(features.z!=0) outputs[20][pixel]=float4(octNormal(normal),roughness,0);
     }
     outputs[1][pixel]=float4(normal,depth);
     outputs[2][pixel]=float4(albedo,materialId);
@@ -269,12 +269,12 @@ void main(uint3 tid:SV_DispatchThreadID) {
     for(uint sampleIndex=0;sampleIndex<samplesPerFrame;sampleIndex++) {
         rng=(tid.x+tid.y*size.x)^((sampleSequence*samplesPerFrame+sampleIndex+1u)*277803737u);
         float2 offset=geometry.w!=0?.5+jitter:float2(randomFloat(),randomFloat());
-        PathSample sample=trace(cameraPosition,cameraRay(float2(pixel)+offset,size),hit,depth,normal,geometry.w!=0);
-        sampleColor+=sampleSum(sample);
+        PathSample pathSample=trace(cameraPosition,cameraRay(float2(pixel)+offset,size),hit,depth,normal,geometry.w!=0);
+        sampleColor+=sampleSum(pathSample);
         if(features.z!=0) {
-            total.directDiffuse+=sample.directDiffuse;total.directSpecular+=sample.directSpecular;
-            total.indirectDiffuse+=sample.indirectDiffuse;total.indirectSpecular+=sample.indirectSpecular;
-            total.skip+=sample.skip;total.hitDistance+=sample.hitDistance;
+            total.directDiffuse+=pathSample.directDiffuse;total.directSpecular+=pathSample.directSpecular;
+            total.indirectDiffuse+=pathSample.indirectDiffuse;total.indirectSpecular+=pathSample.indirectSpecular;
+            total.skip+=pathSample.skip;total.hitDistance+=pathSample.hitDistance;
         }
     }
     if(features.z!=0) {
@@ -290,4 +290,3 @@ void main(uint3 tid:SV_DispatchThreadID) {
     if(frameIndex>0) { float3 previous=outputs[0][pixel].rgb;mean=previous+(sampleColor-previous)/float(frameIndex+1); }
     outputs[0][pixel]=float4(mean,1);
 }
-

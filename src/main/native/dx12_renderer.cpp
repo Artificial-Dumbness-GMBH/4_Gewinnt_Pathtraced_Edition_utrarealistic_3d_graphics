@@ -106,7 +106,7 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
         to.pResource=textures[13].resource.Get();to.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;list->CopyTextureRegion(&to,0,0,0,&from,nullptr);transition(13,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     transition(12,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(6,c,width,height);transition(12,D3D12_RESOURCE_STATE_COPY_SOURCE);
-    frameGeneration.tag(list.Get(),textures[11].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),camera,renderWidth,renderHeight,jx,jy,milliseconds,reset,resources.data(),camera);
+    frameGeneration.tag(list.Get(),textures[11].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),camera,renderWidth,renderHeight,jx,jy,milliseconds,reset);
     auto target=back[swap->GetCurrentBackBufferIndex()].Get();
     D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=target;b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     b.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;b.Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;list->ResourceBarrier(1,&b);

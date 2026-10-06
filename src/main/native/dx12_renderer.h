@@ -169,6 +169,14 @@ struct Backend {
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};uav.Format=format;uav.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
         cpu.ptr+=32*stride;device->CreateUnorderedAccessView(t.resource.Get(),nullptr,&uav,cpu);
     }
+    void nullTexture(int slot) {
+        auto& t=textures[slot];t.resource.Reset();t.state=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        D3D12_SHADER_RESOURCE_VIEW_DESC s{};s.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;s.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;
+        s.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;s.Texture2D.MipLevels=1;
+        auto cpu=heap->GetCPUDescriptorHandleForHeapStart();cpu.ptr+=slot*stride;device->CreateShaderResourceView(nullptr,&s,cpu);
+        D3D12_UNORDERED_ACCESS_VIEW_DESC u{};u.Format=s.Format;u.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
+        cpu.ptr+=32*stride;device->CreateUnorderedAccessView(nullptr,nullptr,&u,cpu);
+    }
     void configure(const int* values,const float* floats) {
         bool effectChanged=!configured||settings[1]!=values[1]||settings[2]!=values[2]||settings[6]!=values[6]||settings[7]!=values[7]||settings[12]!=values[12]||display[3]!=floats[3];
         bool changed=std::memcmp(settings,values,sizeof(settings))!=0||std::memcmp(display,floats,sizeof(display))!=0;
@@ -177,6 +185,9 @@ struct Backend {
             renderWidth=std::max(1u,UINT(width*scale));renderHeight=std::max(1u,UINT(height*scale));
             vendor.configure(device.Get(),values[1],values[2],width,height,renderWidth,renderHeight,floats[3],values[12]);
             for(int i=0;i<32;i++) {
+                bool guide=vendor.rrActive()&&i>=14&&i<=16;
+                bool regeneration=vendor.regenerationActive()&&i>=15&&i<=30&&i!=17;
+                if(i>=14&&!guide&&!regeneration) { nullTexture(i);continue; }
                 UINT w=i==13?960:(i>=10&&i<=12)?width:renderWidth,h=i==13?660:(i>=10&&i<=12)?height:renderHeight;
                 DXGI_FORMAT f=i==0||i==1||i==8?DXGI_FORMAT_R32G32B32A32_FLOAT:(i==3||i==18)?DXGI_FORMAT_R32_FLOAT:
                     i==4?DXGI_FORMAT_R16G16_FLOAT:(i>=11&&i<=13)?DXGI_FORMAT_R8G8B8A8_UNORM:DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -203,7 +214,7 @@ struct Backend {
     }
     void barrier(ID3D12Resource* r) { D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;b.UAV.pResource=r;list->ResourceBarrier(1,&b); }
     void transition(int index,D3D12_RESOURCE_STATES state) {
-        auto& t=textures[index];if(t.state==state) return;
+        auto& t=textures[index];if(!t.resource||t.state==state) return;
         D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=t.resource.Get();
         b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;b.Transition.StateBefore=t.state;b.Transition.StateAfter=state;list->ResourceBarrier(1,&b);t.state=state;
     }
@@ -223,4 +234,3 @@ struct Backend {
     }
     static float halton(UINT index,UINT base) { float f=1,value=0;while(index) { f/=base;value+=f*(index%base);index/=base; }return value-.5f; }
 };
-
