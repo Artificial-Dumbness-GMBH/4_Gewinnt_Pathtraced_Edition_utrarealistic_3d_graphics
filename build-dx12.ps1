@@ -33,7 +33,7 @@ if (!$WithoutVendorSDKs) {
     }
     $dlssBase = "https://raw.githubusercontent.com/NVIDIA/DLSS/374959484e79a640feaba44c93ac8cfb0a03f5b5"
     foreach ($file in @("include/nvsdk_ngx.h", "include/nvsdk_ngx_defs.h", "include/nvsdk_ngx_params.h", "include/nvsdk_ngx_helpers.h",
-        "include/nvsdk_ngx_helpers_d3d.h", "include/nvsdk_ngx_helpers_dlssd_d3d.h", "include/nvsdk_ngx_defs_dlssd.h", "include/nvsdk_ngx_params_dlssd.h",
+        "include/nvsdk_ngx_helpers_d3d.h", "include/nvsdk_ngx_helpers_cuda.h", "include/nvsdk_ngx_helpers_dlssd_d3d.h", "include/nvsdk_ngx_defs_dlssd.h", "include/nvsdk_ngx_params_dlssd.h",
         "lib/Windows_x86_64/x64/nvsdk_ngx_s.lib", "lib/Windows_x86_64/x64/nvsdk_ngx_s_dbg.lib",
         "lib/Windows_x86_64/rel/nvngx_dlss.dll", "lib/Windows_x86_64/rel/nvngx_dlssd.dll", "LICENSE.txt")) {
         Download "$dlssBase/$file" "$dlssDirectory/$file"
@@ -58,4 +58,3 @@ if (!$WithoutVendorSDKs) {
     Copy-Item "$xessDirectory/LICENSE.txt" "$BuildDirectory/Release/XESS-LICENSE.txt"
 }
 Write-Host "DX12 bridge built in $BuildDirectory/Release"
-

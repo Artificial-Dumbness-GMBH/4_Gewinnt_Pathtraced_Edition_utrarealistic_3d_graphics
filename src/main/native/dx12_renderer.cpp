@@ -53,7 +53,7 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
     c.motion[0]=lift;c.motion[1]=previousLift;c.motion[2]=jx;c.motion[3]=jy;
     c.dimensions[0]=float(renderWidth);c.dimensions[1]=float(renderHeight);c.dimensions[2]=float(width);c.dimensions[3]=float(height);
     c.options[0]=display[0];c.options[1]=display[1];c.options[2]=display[2];
-    c.options[3]=settings[9]&&!vendor.active()&&!vendor.regenerationActive()&&lift==previousLift?.85f/(1+.15f*accumulation):0;
+    c.options[3]=settings[9]&&!vendor.active()&&!vendor.regenerationActive()&&lift==previousLift?.85f/(1+.15f*(settings[13]?0:accumulation)):0;
     c.post[2]=!reset;c.post[3]=uiMode;
     c.features[0]=settings[13];c.features[1]=cacheValid;c.features[2]=vendor.regenerationActive();c.features[3]=vendor.rrActive();
     if(settings[13]) {

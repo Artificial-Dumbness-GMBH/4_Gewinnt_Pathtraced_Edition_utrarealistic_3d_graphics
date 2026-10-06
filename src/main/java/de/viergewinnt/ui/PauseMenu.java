@@ -56,10 +56,10 @@ public final class PauseMenu {
             c.add(new Control("restart","Neues Spiel",276,308,640,58,true));
             c.add(new Control("quit","Spiel beenden",276,382,640,58,true));
         } else if(page==0) {
-            c.add(new Control("denoiser",denoiserLabel(),580,174,336,44,true));
-            c.add(new Control("taa",upscalerActive()?"Über Upscaler":settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,!upscalerActive()));
-            pair(c,"strength",286,settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
-                settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
+            c.add(new Control("denoiser",reconstructionActive()?"Über Rekonstruktion":denoiserLabel(),580,174,336,44,!reconstructionActive()));
+            c.add(new Control("taa",upscalerActive()||reconstructionActive()?"Über Rekonstruktion":settings.taa()?"TAA · An":"TAA · Aus",580,230,336,44,!upscalerActive()&&!reconstructionActive()));
+            pair(c,"strength",286,!reconstructionActive()&&settings.denoiseStrength()>.25f&&settings.denoiser()!=RenderSettings.Denoiser.OFF,
+                !reconstructionActive()&&settings.denoiseStrength()<2&&settings.denoiser()!=RenderSettings.Denoiser.OFF);
             pair(c,"bounces",342,settings.bounces()>1,settings.bounces()<12);
             pair(c,"samples",398,settings.samplesPerFrame()>1,settings.samplesPerFrame()<16);
             pair(c,"resolution",454,!upscalerActive()&&settings.maxWidth()>RESOLUTIONS[0][0],!upscalerActive()&&settings.maxWidth()<RESOLUTIONS[RESOLUTIONS.length-1][0]);
@@ -82,7 +82,7 @@ public final class PauseMenu {
             } else {
                 c.add(new Control("vsync",g.vsync()?"An":"Aus",580,174,336,44,true));
                 c.add(new Control("frameLimit",g.frameLimit()==0?"Unbegrenzt":g.frameLimit()+" FPS",580,230,336,44,true));
-                c.add(new Control("passes",Integer.toString(g.denoisePasses()),580,286,336,44,settings.denoiser()==RenderSettings.Denoiser.ATROUS));
+                c.add(new Control("passes",Integer.toString(g.denoisePasses()),580,286,336,44,!reconstructionActive()&&settings.denoiser()==RenderSettings.Denoiser.ATROUS));
                 c.add(new Control("sharpness",String.format(Locale.ROOT,"%.0f %%",g.sharpness()*100),580,342,336,44,settings.denoiser()!=RenderSettings.Denoiser.OWN));
             }
             c.add(new Control("defaults","Standardwerte",276,590,200,42,true));
@@ -185,6 +185,10 @@ public final class PauseMenu {
             ||settings.graphics().upscaler()==GraphicsOptions.Upscaler.XESS&&capabilities.xess()
             ||settings.graphics().upscaler()==GraphicsOptions.Upscaler.DLSS&&capabilities.dlss();
     }
+    private boolean reconstructionActive() {
+        return settings.graphics().reconstruction()==GraphicsOptions.Reconstruction.FSR_RR&&capabilities.rayRegeneration()
+            ||settings.graphics().reconstruction()==GraphicsOptions.Reconstruction.DLSS_RR&&settings.graphics().upscaler()==GraphicsOptions.Upscaler.DLSS&&capabilities.rayReconstruction();
+    }
     private static int nextValue(int[] values,int current,int direction) {
         if(direction>0) { for(int v:values) if(v>current) return v;return values[values.length-1]; }
         for(int i=values.length-1;i>=0;i--) if(values[i]<current) return values[i];return values[0];
@@ -276,4 +280,3 @@ public final class PauseMenu {
         g.dispose();return image;
     }
 }
-

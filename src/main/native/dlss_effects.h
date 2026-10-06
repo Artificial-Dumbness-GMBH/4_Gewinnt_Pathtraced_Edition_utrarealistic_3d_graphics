@@ -61,7 +61,7 @@ public:
         if(scale>0) {
             float lo=std::max(float(minW)/w,float(minH)/h),hi=std::min(float(maxW)/w,float(maxH)/h);
             if(lo>hi) return false;float s=std::clamp(scale,lo,hi);
-            rw=std::clamp(UINT(w*s),minW,maxW);rh=std::clamp(UINT(h*s),minH,maxH);
+            rw=std::max(1u,std::clamp(UINT(w*s),minW,maxW));rh=std::max(1u,std::clamp(UINT(h*s),minH,maxH));
         }
         inputWidth=rw;inputHeight=rh;outputWidth=w;outputHeight=h;enabled=pending=true;return true;
 #else
