@@ -31,8 +31,9 @@ public final class PauseMenu {
     public void capabilities(RenderCapabilities value) { if(!capabilities.equals(value)) { capabilities=value;dirty=true; } }
     public void rendererStatus(String value) { if(!rendererStatus.equals(value)) { rendererStatus=value;dirty=true; } }
     public boolean isGraphics() { return graphics; }
-    public void open(String gameStatus) { graphics=false;focus="resume";status=gameStatus;dirty=true; }
-    public boolean back() { if(!graphics) return false;graphics=false;focus="graphics";dirty=true;return true; }
+    public void open(String gameStatus) { cancelDrag();graphics=false;focus="resume";status=gameStatus;dirty=true; }
+    public boolean back() { cancelDrag();if(!graphics) return false;graphics=false;focus="graphics";dirty=true;return true; }
+    private void cancelDrag() { if(!dragging.isEmpty()) { settings=beforeDrag;dragging="";dirty=true; } }
     public void saved(boolean success) { saveStatus=success?"Gespeichert · Änderungen wirken sofort":"Nur für diese Sitzung · Speichern fehlgeschlagen";dirty=true; }
     public boolean takeDirty() { boolean result=dirty;dirty=false;return result; }
     public static float scale(int framebufferWidth,int framebufferHeight) {
@@ -109,7 +110,7 @@ public final class PauseMenu {
     }
     public Action pointer(double x,double y,boolean pressed) {
         if(!dragging.isEmpty()) {
-            if(!pressed) { dragging="";return settings.equals(beforeDrag)?Action.NONE:Action.SETTINGS; }
+            if(!pressed) { updateSlider(x);dragging="";return settings.equals(beforeDrag)?Action.NONE:Action.SETTINGS; }
             updateSlider(x);return Action.NONE;
         }
         if(pressed) for(Control c:controls()) if(c.enabled&&c.contains(x,y)&&(c.id.equals("renderScale")||c.id.equals("sharpness"))) {
@@ -157,6 +158,8 @@ public final class PauseMenu {
                     int mode=g.upscaler().ordinal();
                     do { mode=(mode+1)%4; } while(mode==1&&!capabilities.fsr()||mode==2&&!capabilities.xess()||mode==3&&!capabilities.dlss());
                     g=g.withUpscaler(GraphicsOptions.Upscaler.values()[mode]);
+                    if(mode!=GraphicsOptions.Upscaler.DLSS.ordinal()&&g.reconstruction()==GraphicsOptions.Reconstruction.DLSS_RR)
+                        g=g.withReconstruction(GraphicsOptions.Reconstruction.OFF);
                 }
                 case "renderScale" -> g=g.withRenderScale(g.renderScale()>=.99f?.333f:Math.min(1,(g.renderScale()==0?.667f:g.renderScale())+.05f));
                 case "radianceCache" -> g=g.withRadianceCache(!g.radianceCache());

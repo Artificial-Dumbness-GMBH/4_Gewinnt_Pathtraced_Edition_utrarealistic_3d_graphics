@@ -85,6 +85,18 @@ public final class MenuSettingsTest {
         click(menu,"neural");click(menu,"reconstruction");click(menu,"radianceCache");
         check(menu.settings().graphics().reconstruction()==GraphicsOptions.Reconstruction.DLSS_RR&&menu.settings().graphics().radianceCache(),"reconstruction and cache toggles");
         check(menu.image(1).getWidth()==960,"reconstruction page renders");
+        RenderSettings reconstructed=menu.settings();
+        click(menu,"graphics");
+        check(click(menu,"denoiser")==PauseMenu.Action.NONE&&click(menu,"taa")==PauseMenu.Action.NONE,"reconstruction owns filtering");
+        click(menu,"pipeline");click(menu,"upscaler");
+        check(menu.settings().graphics().upscaler()==GraphicsOptions.Upscaler.OFF&&menu.settings().graphics().reconstruction()==GraphicsOptions.Reconstruction.OFF,"leaving DLSS disables its reconstruction");
+        RenderSettings committed=menu.settings();
+        menu.pointer(slider.x()+12,slider.y()+10,true);menu.back();
+        check(!menu.dragging()&&menu.settings().equals(committed),"escape cancels uncommitted slider");
+        click(menu,"display");
+        var sharpness=menu.controls().stream().filter(c->c.id().equals("sharpness")).findFirst().orElseThrow();
+        menu.pointer(sharpness.x()+12,sharpness.y()+10,true);
+        check(menu.pointer(2000,sharpness.y()+10,false)==PauseMenu.Action.SETTINGS&&menu.settings().graphics().sharpness()==1,"sharpness release uses final pointer position");
         for(float scale:new float[]{Float.NaN,.1f,1.1f}) {
             try { GraphicsOptions.defaults().withRenderScale(scale);throw new AssertionError("invalid scale accepted"); }
             catch(IllegalArgumentException expected) { }
@@ -96,8 +108,10 @@ public final class MenuSettingsTest {
         try {
             RenderSettings custom=defaults.withDenoiser(RenderSettings.Denoiser.OWN).withBounces(6).withSamples(8).withExposure(1.5f).withTaa(false);
             SettingsStore.save(file,custom);check(SettingsStore.load(file).equals(custom),"settings round trip");
-            RenderSettings advanced=custom.withGraphics(menu.settings().graphics());
-            SettingsStore.save(file,advanced);check(SettingsStore.load(file).equals(advanced),"advanced settings round trip");
+            for(RenderSettings configured:new RenderSettings[]{reconstructed,menu.settings()}) {
+                RenderSettings advanced=custom.withGraphics(configured.graphics());
+                SettingsStore.save(file,advanced);check(SettingsStore.load(file).equals(advanced),"advanced settings round trip");
+            }
             for(int[] resolution:new int[][]{{124,70},{213,120}}) {
                 RenderSettings low=custom.withResolution(resolution[0],resolution[1]);SettingsStore.save(file,low);
                 check(SettingsStore.load(file).equals(low),"low resolution persistence");

@@ -25,6 +25,7 @@ Der Branchname ist ein gewünschter Name, keine Aussage über bestandene GPU-Abn
 - ESC → **Rekonstruktion**: Aus / DLSS RR / FSR RR und experimenteller Radiance Cache. DLSS RR wählt DLSS automatisch.
 - ESC → **Anzeige & Filter**: Schärferegler und vorhandene Anzeigeoptionen.
 - Änderungen an Reglern werden beim Loslassen übernommen. Ziehen über den Panelrand begrenzt den Wert; Loslassen außerhalb übernimmt ihn ebenfalls.
+- ESC verwirft einen noch gezogenen Regler. Der Wechsel weg von DLSS deaktiviert dessen Ray Reconstruction.
 - Fehlende SDKs deaktivieren ihre Auswahl. Eine fehlgeschlagene Initialisierung zeigt einen Fallback im Status; ein Dispatch-Fehler bricht den Frame ab.
 
 ## Build und Paket
@@ -70,6 +71,11 @@ OpenGL-Welthologramme bleiben eine bekannte Paritätslücke des Ausgangsstands.
 Der Branch-Workflow prüft Java-Regressionen, sämtliche HLSL-Entrypoints, den nativen
 Windows-Build mit allen drei SDKs sowie den Build ohne SDKs, Kameramatrizen und
 das portable EXE-Paket. Ein erfolgreicher Build bestätigt keine GPU-Laufzeitfunktion.
+
+Am 6. Oktober 2026 bestanden alle genannten Schritte für Commit
+`950993ed8ead87936e2de8881ceda83bf7dfc10b`
+([Windows-CI](https://github.com/Artificial-Dumbness-GMBH/4_Gewinnt_Pathtraced_Edition_utrarealistic_3d_graphics/actions/runs/37423839641)).
+Weitere Commits werden vom selben Workflow erneut geprüft.
 
 Auf Windows mit D3D12-Debug-Layer abnehmen: DXR ↔ Software-Bildvergleich,
 HDR-/Bewegungsdaten, alle Upscaler/Presets/Regler, RR/Ray Regeneration, Cache ein/aus,
