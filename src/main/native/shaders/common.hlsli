@@ -10,6 +10,7 @@ cbuffer Constants : register(b0) {
     float4 dimensions; // render width/height, output width/height
     float4 options; // exposure, filter strength, sharpness, temporal blend
     uint4 post; // pass, source texture, valid history, UI mode
+    uint4 features; // cache enabled, cache valid, ray regeneration, ray reconstruction
 };
 #define cameraPosition cameraPosition4.xyz
 #define cameraForward cameraForward4.xyz
@@ -36,8 +37,10 @@ StructuredBuffer<Node> nodes : register(t3);
 #ifdef HARDWARE_RT
 RaytracingAccelerationStructure scene : register(t4);
 #endif
-Texture2D<float4> textures[16] : register(t5);
-RWTexture2D<float4> outputs[16] : register(u0);
+Texture2D<float4> textures[32] : register(t5);
+RWTexture2D<float4> outputs[32] : register(u0);
+ByteAddressBuffer cacheRead : register(t37);
+RWByteAddressBuffer cacheWrite : register(u32);
 SamplerState linearClamp : register(s0);
 float3 cameraRay(float2 pixel,int2 size) {
     float2 p=pixel/float2(size)*2-1;p.y=-p.y;p.x*=float(size.x)/size.y;
@@ -50,3 +53,4 @@ float2 projectPrevious(float3 world) {
     return (p*.5+.5)*dimensions.xy;
 }
 #endif
+

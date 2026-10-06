@@ -13,7 +13,7 @@ extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(adapterName)(JNIEnv* env,jclass,
     try { DXGI_ADAPTER_DESC1 d{};checked(backend(h).adapter->GetDesc1(&d),"Adapter name");return env->NewString(reinterpret_cast<const jchar*>(d.Description),jsize(wcslen(d.Description))); }catch(const std::exception& e) { report(env,e);return nullptr; }
 }
 extern "C" JNIEXPORT jint JNICALL JNI_METHOD(capabilities)(JNIEnv* env,jclass,jlong h) {
-    try { auto& b=backend(h);return (b.dxr?1:0)|(b.vendor.fsrAvailable()?2:0)|(b.vendor.xessAvailable()?4:0)|(b.frameGeneration.maxMultiplier()<<8); }catch(const std::exception& e) { report(env,e);return 0; }
+    try { auto& b=backend(h);return (b.dxr?1:0)|(b.vendor.fsrAvailable()?2:0)|(b.vendor.xessAvailable()?4:0)|(b.vendor.dlssAvailable()?8:0)|(b.vendor.rrAvailable()?16:0)|(b.vendor.regenerationAvailable()?32:0)|(b.frameGeneration.maxMultiplier()<<8); }catch(const std::exception& e) { report(env,e);return 0; }
 }
 extern "C" JNIEXPORT jstring JNICALL JNI_METHOD(status)(JNIEnv* env,jclass,jlong h) {
     try { auto& b=backend(h);return env->NewStringUTF((b.info+" | "+b.frameGeneration.status()).c_str()); }catch(const std::exception& e) { report(env,e);return nullptr; }
@@ -29,10 +29,11 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(resize)(JNIEnv* env,jclass,jlong h,
 }
 extern "C" JNIEXPORT void JNICALL JNI_METHOD(configure)(JNIEnv* env,jclass,jlong h,jintArray ints,jfloatArray floats) {
     try {
-        if(!ints||!floats||env->GetArrayLength(ints)!=12||env->GetArrayLength(floats)!=3) throw std::runtime_error("Invalid settings ABI");
-        int v[12];float f[3];env->GetIntArrayRegion(ints,0,12,v);env->GetFloatArrayRegion(floats,0,3,f);if(env->ExceptionCheck()) return;
-        if(v[0]<0||v[0]>2||v[1]<0||v[1]>2||v[2]<0||v[2]>3||v[3]<0||v[3]>2||v[4]<1||v[4]>12||v[5]<1||v[5]>16
+        if(!ints||!floats||env->GetArrayLength(ints)!=14||env->GetArrayLength(floats)!=4) throw std::runtime_error("Invalid settings ABI");
+        int v[14];float f[4];env->GetIntArrayRegion(ints,0,14,v);env->GetFloatArrayRegion(floats,0,4,f);if(env->ExceptionCheck()) return;
+        if(v[0]<0||v[0]>2||v[1]<0||v[1]>3||v[2]<0||v[2]>3||v[3]<0||v[3]>2||v[4]<1||v[4]>12||v[5]<1||v[5]>16
             ||v[6]<64||v[6]>3840||v[7]<64||v[7]>2160||v[8]<1||v[8]>5||v[9]<0||v[9]>1||v[10]<0||v[10]>1||v[11]<1||v[11]>4
+            ||v[12]<0||v[12]>2||v[13]<0||v[13]>1||!std::isfinite(f[3])||(f[3]!=0&&(f[3]<.333f||f[3]>1))
             ||!std::isfinite(f[0])||f[0]<.25f||f[0]>3||!std::isfinite(f[1])||f[1]<.25f||f[1]>2||!std::isfinite(f[2])||f[2]<0||f[2]>1) throw std::runtime_error("Invalid settings");
         auto& b=backend(h);if(!b.width||!b.height) throw std::runtime_error("Attach window before configure");b.configure(v,f);
     }catch(const std::exception& e) { report(env,e); }
@@ -54,13 +55,14 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(setScene)(JNIEnv* env,jclass,jlong 
         for(auto r:refs) env->DeleteLocalRef(r);
     }catch(const std::exception& e) { report(env,e); }
 }
-extern "C" JNIEXPORT void JNICALL JNI_METHOD(render)(JNIEnv* env,jclass,jlong h,jfloatArray camera,jfloat lift,jfloat ms,jobject ui,jint mode) {
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(render)(JNIEnv* env,jclass,jlong h,jfloatArray camera,jfloat lift,jfloat ms,jobject ui,jint mode,jboolean uiDirty) {
     try {
         if(!camera||env->GetArrayLength(camera)!=16||!std::isfinite(lift)||!std::isfinite(ms)||mode<0||mode>2) throw std::runtime_error("Invalid frame ABI");
         float c[16];env->GetFloatArrayRegion(camera,0,16,c);if(env->ExceptionCheck()) return;
         for(float f:c) if(!std::isfinite(f)) throw std::runtime_error("Invalid camera");
         const void* bytes=ui?env->GetDirectBufferAddress(ui):nullptr;
         if(mode!=0&&(!bytes||env->GetDirectBufferCapacity(ui)!=960*660*4)) throw std::runtime_error("Invalid UI buffer");
-        backend(h).render(c,lift,std::clamp(ms,.1f,1000.f),bytes,mode);
+        backend(h).render(c,lift,std::clamp(ms,.1f,1000.f),bytes,mode,uiDirty);
     }catch(const std::exception& e) { report(env,e); }
 }
+

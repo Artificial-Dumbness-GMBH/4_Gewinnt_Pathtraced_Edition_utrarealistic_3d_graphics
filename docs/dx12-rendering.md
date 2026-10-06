@@ -1,3 +1,5 @@
+> Für die Erweiterungen dieses Branches gilt [DX12 fertig](dx12-fertig.md). Die nachfolgende Dokumentation beschreibt den übernommenen Ausgangsstand; deren frühere Prüfresultate validieren die neuen Pfade nicht.
+
 # DX12-Renderer: Build, Funktionen und Prüfstatus
 
 ## Startbare Windows-EXE
@@ -117,3 +119,4 @@ Quality/Balanced/Performance; FG aus/2×/3×/4× nach Verfügbarkeit; Resize/Min
 Pause/Neustart; fallende Steine; alte Settings; fehlende SDK-DLLs; mehrere GPUs;
 Debug-Layer ohne Ressourcen-, Descriptor- oder Fence-Fehler. Keine pauschalen FPS-
 oder Qualitätsversprechen aus dem erfolgreichen Cross-Build ableiten.
+

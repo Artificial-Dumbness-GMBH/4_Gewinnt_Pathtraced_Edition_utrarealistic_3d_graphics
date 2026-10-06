@@ -72,6 +72,23 @@ public final class MenuSettingsTest {
         click(menu,"frameGeneration");click(menu,"upscaler");
         check(menu.settings().graphics().frameGeneration()==1&&menu.settings().graphics().upscaler()==GraphicsOptions.Upscaler.OFF,"unsupported saved options can be disabled");
         check(menu.image(1).getHeight()==PauseMenu.HEIGHT,"pipeline rasterization");
+        menu.capabilities(new RenderCapabilities(true,true,true,true,4,true,true,true));
+        click(menu,"upscaler");click(menu,"upscaler");click(menu,"upscaler");
+        check(menu.settings().graphics().upscaler()==GraphicsOptions.Upscaler.DLSS,"DLSS selection");
+        var slider=menu.controls().stream().filter(c->c.id().equals("renderScale")).findFirst().orElseThrow();
+        check(menu.pointer(slider.x()+12,slider.y()+10,true)==PauseMenu.Action.NONE&&menu.dragging(),"slider starts without rebuilding renderer");
+        check(Math.abs(menu.settings().graphics().renderScale()-.333f)<.001,"slider minimum");
+        menu.pointer(2000,slider.y()+10,true);
+        check(menu.settings().graphics().renderScale()==1,"drag clamps outside panel");
+        check(menu.pointer(2000,700,false)==PauseMenu.Action.SETTINGS&&!menu.dragging(),"release outside panel commits slider");
+        click(menu,"quality");check(menu.settings().graphics().renderScale()==0,"preset clears custom scale");
+        click(menu,"neural");click(menu,"reconstruction");click(menu,"radianceCache");
+        check(menu.settings().graphics().reconstruction()==GraphicsOptions.Reconstruction.DLSS_RR&&menu.settings().graphics().radianceCache(),"reconstruction and cache toggles");
+        check(menu.image(1).getWidth()==960,"reconstruction page renders");
+        for(float scale:new float[]{Float.NaN,.1f,1.1f}) {
+            try { GraphicsOptions.defaults().withRenderScale(scale);throw new AssertionError("invalid scale accepted"); }
+            catch(IllegalArgumentException expected) { }
+        }
         try { GraphicsOptions.defaults().withSharpness(Float.NaN);throw new AssertionError("NaN accepted"); }
         catch(IllegalArgumentException expected) { }
         check(Camera.isWalkable(10,10)&&!Camera.isWalkable(0,0)&&!Camera.isWalkable(22,0)&&!Camera.isWalkable(0,26),"room/table collisions");

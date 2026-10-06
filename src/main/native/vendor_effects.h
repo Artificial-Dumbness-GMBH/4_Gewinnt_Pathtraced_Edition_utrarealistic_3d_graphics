@@ -25,7 +25,11 @@ inline HMODULE loadSibling(const wchar_t* name) {
     return LoadLibraryExW(full.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
 }
 template<class T> inline T symbol(HMODULE dll,const char* name) { return dll?reinterpret_cast<T>(GetProcAddress(dll,name)):nullptr; }
+#include "dlss_effects.h"
+#include "ray_regeneration.h"
 class VendorEffects {
+    DlssEffects dlss;
+    RayRegeneration regeneration;
     int selected=0;
     bool fsrSupported=false,xessSupported=false;
     std::string description="Upscaling off";
@@ -45,6 +49,7 @@ class VendorEffects {
     decltype(&xessD3D12Execute) executeXess=nullptr;
     decltype(&xessDestroyContext) destroyXess=nullptr;
     decltype(&xessGetInputResolution) inputXess=nullptr;
+    decltype(&xessGetOptimalInputResolution) optimalXess=nullptr;
 #endif
     void releaseContexts() {
 #ifdef PT_FSR
@@ -53,7 +58,7 @@ class VendorEffects {
 #ifdef PT_XESS
         if(xessContext&&destroyXess) destroyXess(xessContext);xessContext=nullptr;
 #endif
-        selected=0;
+        dlss.release();selected=0;
     }
 public:
     VendorEffects()=default;
@@ -61,7 +66,7 @@ public:
     VendorEffects& operator=(const VendorEffects&)=delete;
     ~VendorEffects() { destroy(); }
     void init(ID3D12Device* device) {
-        (void)device;
+        (void)device;dlss.init(device);regeneration.init(device);
 #ifdef PT_FSR
         fsrModule=loadSibling(L"amd_fidelityfx_upscaler_dx12.dll");
         createFsr=symbol<PfnFfxCreateContext>(fsrModule,"ffxCreateContext");
@@ -80,6 +85,7 @@ public:
         executeXess=symbol<decltype(executeXess)>(xessModule,"xessD3D12Execute");
         destroyXess=symbol<decltype(destroyXess)>(xessModule,"xessDestroyContext");
         inputXess=symbol<decltype(inputXess)>(xessModule,"xessGetInputResolution");
+        optimalXess=symbol<decltype(optimalXess)>(xessModule,"xessGetOptimalInputResolution");
         if(createXess&&initXess&&executeXess&&destroyXess&&inputXess) {
             xessSupported=createXess(device,&xessContext)>=XESS_RESULT_SUCCESS;
             if(xessContext) destroyXess(xessContext);xessContext=nullptr;
@@ -88,19 +94,26 @@ public:
     }
     bool fsrAvailable() const { return fsrSupported; }
     bool xessAvailable() const { return xessSupported; }
+    bool dlssAvailable() const { return dlss.available(); }
+    bool rrAvailable() const { return dlss.rrAvailable(); }
+    bool regenerationAvailable() const { return regeneration.available(); }
+    bool rrActive() const { return dlss.rrActive(); }
+    bool regenerationActive() const { return regeneration.active(); }
+    bool reconstructing() const { return rrActive()||regenerationActive(); }
     bool active() const { return selected!=0; }
     const std::string& status() const { return description; }
-    void configure(ID3D12Device* device,int requested,int quality,UINT width,UINT height,UINT& rw,UINT& rh) {
+    void configure(ID3D12Device* device,int requested,int quality,UINT width,UINT height,UINT& rw,UINT& rh,float scale,int reconstruction) {
         releaseContexts();description=requested?"Requested upscaler unavailable; native fallback":"Upscaling off";
         (void)device;(void)quality;(void)width;(void)height;(void)rw;(void)rh;
 #ifdef PT_FSR
         if(requested==1&&fsrSupported) {
             const float ratios[]={1,1.5f,1.7f,2};
-            UINT fw=std::max(1u,UINT(width/ratios[quality])),fh=std::max(1u,UINT(height/ratios[quality]));
+            float renderScale=scale>0?scale:1/ratios[quality];
+            UINT fw=std::max(1u,UINT(width*renderScale)),fh=std::max(1u,UINT(height*renderScale));
             ffxCreateBackendDX12Desc backend{};backend.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12;backend.device=device;
             ffxCreateContextDescUpscaleVersion version{};version.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION;version.header.pNext=&backend.header;version.version=FFX_UPSCALER_VERSION;
             ffxCreateContextDescUpscale desc{};desc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE;desc.header.pNext=&version.header;
-            desc.flags=FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE|FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;desc.maxRenderSize={fw,fh};desc.maxUpscaleSize={width,height};
+            desc.flags=FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE|FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;desc.maxRenderSize={width,height};desc.maxUpscaleSize={width,height};
             if(createFsr(&fsrContext,&desc.header,nullptr)==FFX_API_RETURN_OK) {
                 selected=1;rw=fw;rh=fh;
                 ffxQueryGetProviderVersion q{};q.header.type=FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
@@ -117,12 +130,23 @@ public:
             if(createXess(device,&xessContext)>=XESS_RESULT_SUCCESS&&initXess(xessContext,&p)>=XESS_RESULT_SUCCESS
                 &&inputXess(xessContext,&p.outputResolution,p.qualitySetting,&input)>=XESS_RESULT_SUCCESS&&input.x&&input.y) {
                 selected=2;rw=input.x;rh=input.y;description="XeSS-SR (SDK 3.0.2)";
+                xess_2d_t lo{},hi{},optimal{};
+                if(scale>0&&optimalXess&&optimalXess(xessContext,&p.outputResolution,p.qualitySetting,&optimal,&lo,&hi)>=XESS_RESULT_SUCCESS) {
+                    float lower=std::max(float(lo.x)/width,float(lo.y)/height),upper=std::min(float(hi.x)/width,float(hi.y)/height);
+                    if(lower<=upper) { float s=std::clamp(scale,lower,upper);rw=std::clamp(UINT(width*s),lo.x,hi.x);rh=std::clamp(UINT(height*s),lo.y,hi.y); }
+                }
             } else { releaseContexts();xessSupported=false;description="XeSS initialization failed; native fallback"; }
         }
 #endif
+        if(requested==3&&dlss.configure(reconstruction==1,quality,scale,width,height,rw,rh)) { selected=3;description=dlss.rrActive()?"DLSS Ray Reconstruction":"DLSS Super Resolution"; }
+        regeneration.configure(device,reconstruction==2,rw,rh);
+        if(regeneration.active()) description+=" + FSR Ray Regeneration 1.2";
+        else if(reconstruction==2) description+=" | Ray Regeneration unavailable";
+        if(reconstruction==1&&!dlss.rrActive()) description+=" | DLSS RR unavailable (select DLSS)";
     }
     void execute(ID3D12GraphicsCommandList* list,ID3D12Resource* color,ID3D12Resource* depth,ID3D12Resource* motion,ID3D12Resource* output,
-            UINT rw,UINT rh,UINT w,UINT h,float jx,float jy,float ms,bool reset) {
+            UINT rw,UINT rh,UINT w,UINT h,float jx,float jy,float ms,bool reset,ID3D12Resource* const* resources,const float* camera) {
+        if(selected==3) dlss.execute(list,color,depth,motion,output,resources[14],resources[15],resources[16],camera,rw,rh,jx,jy,ms,reset);
         (void)list;(void)color;(void)depth;(void)motion;(void)output;(void)rw;(void)rh;(void)w;(void)h;(void)jx;(void)jy;(void)ms;(void)reset;
 #ifdef PT_FSR
         if(selected==1) {
@@ -142,8 +166,11 @@ public:
         }
 #endif
     }
+    void regenerate(ID3D12GraphicsCommandList* list,ID3D12Resource* const* resources,const float* camera,const float* previous,UINT w,UINT h,UINT frame,float jx,float jy,bool reset) {
+        regeneration.execute(list,resources,camera,previous,w,h,frame,jx,jy,reset);
+    }
     void destroy() {
-        releaseContexts();
+        releaseContexts();dlss.destroy();regeneration.destroy();
 #ifdef PT_FSR
         if(fsrModule) FreeLibrary(fsrModule);fsrModule=nullptr;
 #endif
@@ -152,3 +179,4 @@ public:
 #endif
     }
 };
+

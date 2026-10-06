@@ -78,3 +78,18 @@ void composite(uint3 tid:SV_DispatchThreadID) {
     }
     outputs[12][tid.xy]=float4(color,1);
 }
+
+
+[numthreads(8,8,1)]
+void regen_compose(uint3 tid:SV_DispatchThreadID) {
+    if(any(tid.xy>=uint2(dimensions.xy))) return;
+    int2 p=tid.xy;
+    float3 diffuse=(textures[25][p].rgb+textures[27][p].rgb)*textures[15][p].rgb;
+    float3 specular=(textures[26][p].rgb+textures[28][p].rgb)*textures[16][p].rgb;
+    outputs[29][p]=float4(diffuse+specular+textures[30][p].rgb,1);
+}
+[numthreads(8,8,1)]
+void cache_clear(uint3 tid:SV_DispatchThreadID) {
+    uint slot=tid.y*128+tid.x;if(slot>=16384||tid.x>=128||tid.y>=128) return;
+    cacheWrite.Store4(slot*32,uint4(0,0,0,0));cacheWrite.Store4(slot*32+16,uint4(0,0,0,0));
+}

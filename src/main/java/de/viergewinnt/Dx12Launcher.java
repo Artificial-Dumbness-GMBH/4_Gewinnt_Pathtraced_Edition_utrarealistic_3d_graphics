@@ -23,7 +23,7 @@ public final class Dx12Launcher {
             if(verify) {
                 if(report==null) throw new IllegalArgumentException("--verify-package requires a report path");
                 // Validate the package/loader without creating a GPU device.
-                for(String dll:new String[]{"libxell.dll","libxess.dll","libxess_fg.dll","amd_fidelityfx_upscaler_dx12.dll","viergewinnt_dx12.dll"}) {
+                for(String dll:new String[]{"libxell.dll","libxess.dll","libxess_fg.dll","amd_fidelityfx_upscaler_dx12.dll","amd_fidelityfx_denoiser_dx12.dll","nvngx_dlss.dll","nvngx_dlssd.dll","viergewinnt_dx12.dll"}) {
                     System.load(nativeDirectory.resolve(dll).toString());
                 }
                 Class.forName("org.lwjgl.system.Library");
@@ -34,7 +34,7 @@ public final class Dx12Launcher {
                 try(var shader=Dx12Launcher.class.getResourceAsStream("/shaders/pathtrace.comp")) {
                     if(shader==null||shader.read()<0) throw new IllegalStateException("Shader resources missing");
                 }
-                Files.writeString(report,"PASS: bundled JVM, classpath, LWJGL/GLFW native libraries and DX12/FSR/XeSS DLL loading. No GPU rendering tested.\n");
+                Files.writeString(report,"PASS: bundled JVM, classpath, LWJGL/GLFW native libraries and DX12/FSR/DLSS/XeSS DLL loading. No GPU rendering tested.\n");
                 return;
             }
             Files.createDirectories(log.getParent());

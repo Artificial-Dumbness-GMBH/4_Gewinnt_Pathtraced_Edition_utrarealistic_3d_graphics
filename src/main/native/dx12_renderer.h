@@ -21,6 +21,8 @@
 #include "history.h"
 #include "tonemap.h"
 #include "composite.h"
+#include "regen_compose.h"
+#include "cache_clear.h"
 using Microsoft::WRL::ComPtr;
 inline void checked(HRESULT hr,const char* operation) {
     if(FAILED(hr)) throw std::runtime_error(std::string(operation)+" (HRESULT "+std::to_string(static_cast<unsigned long>(hr))+")");
@@ -30,9 +32,9 @@ struct Constants {
     float lightPosition[4]{0,13.8f,0,0},lightSize[4]{6,0,5,0},lightRadiance[4]{18,17.2f,16,0};
     UINT counts[4]{},geometry[4]{};
     float motion[4]{},dimensions[4]{},options[4]{};
-    UINT post[4]{};
+    UINT post[4]{},features[4]{};
 };
-static_assert(sizeof(Constants)==272,"HLSL constant layout");
+static_assert(sizeof(Constants)==288,"HLSL constant layout");
 struct Texture { ComPtr<ID3D12Resource> resource;D3D12_RESOURCE_STATES state=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; };
 struct Backend {
     ComPtr<IDXGIFactory6> factory;
@@ -45,10 +47,13 @@ struct Backend {
     ComPtr<ID3D12Fence> fence;
     ComPtr<ID3D12DescriptorHeap> heap;
     ComPtr<ID3D12RootSignature> root;
-    std::array<ComPtr<ID3D12PipelineState>,7> pipelines;
+    std::array<ComPtr<ID3D12PipelineState>,9> pipelines;
     std::array<ComPtr<ID3D12Resource>,2> back;
     std::array<ComPtr<ID3D12Resource>,4> sceneBuffers;
-    std::array<Texture,14> textures;
+    std::array<Texture,32> textures;
+    ComPtr<ID3D12Resource> cacheRead,cacheWrite;
+    bool cacheValid=false;
+    static constexpr UINT CacheSlots=16384,CacheBytes=CacheSlots*32;
     ComPtr<ID3D12Resource> constants,uiUpload,rtVertices,rtIndices,blas,tlas,scratch,instance;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT uiFootprint{};
     std::vector<float> baseVertices;
@@ -58,8 +63,8 @@ struct Backend {
     bool dxr=false,tearing=false,sceneDirty=true,historyValid=false,configured=false,accelerationBuilt=false;
     HANDLE event=nullptr;
     UINT64 fenceValue=0;
-    int settings[12]{0,0,1,2,3,4,960,540,4,1,1,1};
-    float display[3]{1,1,.2f};
+    int settings[14]{0,0,1,2,3,4,960,540,4,1,1,1,0,0};
+    float display[4]{1,1,.2f,0};
     VendorEffects vendor;
     FrameGeneration frameGeneration;
     std::string info="DX12";
@@ -108,29 +113,33 @@ struct Backend {
         checked(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&list)),"Create command list");checked(list->Close(),"Close initial list");
         checked(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"Create fence");
         event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event) throw std::runtime_error("Create fence event");
-        D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;hd.NumDescriptors=32;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        D3D12_DESCRIPTOR_HEAP_DESC hd{};hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;hd.NumDescriptors=64;hd.Flags=D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
         checked(device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&heap)),"Create descriptor heap");stride=device->GetDescriptorHandleIncrementSize(hd.Type);
         D3D12_DESCRIPTOR_RANGE ranges[2]{};
-        ranges[0].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;ranges[0].NumDescriptors=16;ranges[0].BaseShaderRegister=5;
-        ranges[1].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_UAV;ranges[1].NumDescriptors=16;
-        D3D12_ROOT_PARAMETER params[8]{};params[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
+        ranges[0].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_SRV;ranges[0].NumDescriptors=32;ranges[0].BaseShaderRegister=5;
+        ranges[1].RangeType=D3D12_DESCRIPTOR_RANGE_TYPE_UAV;ranges[1].NumDescriptors=32;
+        D3D12_ROOT_PARAMETER params[10]{};params[0].ParameterType=D3D12_ROOT_PARAMETER_TYPE_CBV;
         for(int i=1;i<6;i++) { params[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;params[i].Descriptor.ShaderRegister=i-1; }
         for(int i=6;i<8;i++) { params[i].ParameterType=D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;params[i].DescriptorTable={1,&ranges[i-6]}; }
         D3D12_STATIC_SAMPLER_DESC sampler{};sampler.Filter=D3D12_FILTER_MIN_MAG_MIP_LINEAR;
         sampler.ComparisonFunc=D3D12_COMPARISON_FUNC_ALWAYS;
         sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D12_TEXTURE_ADDRESS_MODE_CLAMP;sampler.MaxLOD=D3D12_FLOAT32_MAX;sampler.MaxAnisotropy=1;
-        D3D12_ROOT_SIGNATURE_DESC rd{};rd.NumParameters=8;rd.pParameters=params;rd.NumStaticSamplers=1;rd.pStaticSamplers=&sampler;
+        D3D12_ROOT_SIGNATURE_DESC rd{};params[8].ParameterType=D3D12_ROOT_PARAMETER_TYPE_SRV;params[8].Descriptor.ShaderRegister=37;
+        params[9].ParameterType=D3D12_ROOT_PARAMETER_TYPE_UAV;params[9].Descriptor.ShaderRegister=32;
+        rd.NumParameters=10;rd.pParameters=params;rd.NumStaticSamplers=1;rd.pStaticSamplers=&sampler;
         ComPtr<ID3DBlob> serialized,error;checked(D3D12SerializeRootSignature(&rd,D3D_ROOT_SIGNATURE_VERSION_1,&serialized,&error),"Serialize root");
         checked(device->CreateRootSignature(0,serialized->GetBufferPointer(),serialized->GetBufferSize(),IID_PPV_ARGS(&root)),"Create root");
-        const void* shaders[]={trace_sw,trace_hw,denoise,temporal,history,tonemap,composite};
-        const size_t lengths[]={sizeof(trace_sw),sizeof(trace_hw),sizeof(denoise),sizeof(temporal),sizeof(history),sizeof(tonemap),sizeof(composite)};
-        for(int i=0;i<7;i++) {
+        const void* shaders[]={trace_sw,trace_hw,denoise,temporal,history,tonemap,composite,regen_compose,cache_clear};
+        const size_t lengths[]={sizeof(trace_sw),sizeof(trace_hw),sizeof(denoise),sizeof(temporal),sizeof(history),sizeof(tonemap),sizeof(composite),sizeof(regen_compose),sizeof(cache_clear)};
+        for(int i=0;i<9;i++) {
             if(i==1&&!dxr) continue;
             D3D12_COMPUTE_PIPELINE_STATE_DESC pd{};pd.pRootSignature=root.Get();pd.CS={shaders[i],lengths[i]};
             HRESULT hr=device->CreateComputePipelineState(&pd,IID_PPV_ARGS(&pipelines[i]));
             if(i==1&&FAILED(hr)) { dxr=false;continue; }checked(hr,"Create pipeline");
         }
         constants=buffer(16384);vendor.init(device.Get());
+        cacheRead=buffer(CacheBytes,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
+        cacheWrite=buffer(CacheBytes,D3D12_HEAP_TYPE_DEFAULT,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);
     }
     void targets() { for(UINT i=0;i<2;i++) checked(swap->GetBuffer(i,IID_PPV_ARGS(&back[i])),"Get backbuffer"); }
     void attach(HWND window,UINT w,UINT h) {
@@ -158,33 +167,28 @@ struct Backend {
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};srv.Format=format;srv.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;srv.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;srv.Texture2D.MipLevels=1;
         auto cpu=heap->GetCPUDescriptorHandleForHeapStart();cpu.ptr+=slot*stride;device->CreateShaderResourceView(t.resource.Get(),&srv,cpu);
         D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};uav.Format=format;uav.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;
-        cpu.ptr+=16*stride;device->CreateUnorderedAccessView(t.resource.Get(),nullptr,&uav,cpu);
+        cpu.ptr+=32*stride;device->CreateUnorderedAccessView(t.resource.Get(),nullptr,&uav,cpu);
     }
     void configure(const int* values,const float* floats) {
-        bool effectChanged=!configured||settings[1]!=values[1]||settings[2]!=values[2]||settings[6]!=values[6]||settings[7]!=values[7];
+        bool effectChanged=!configured||settings[1]!=values[1]||settings[2]!=values[2]||settings[6]!=values[6]||settings[7]!=values[7]||settings[12]!=values[12]||display[3]!=floats[3];
         bool changed=std::memcmp(settings,values,sizeof(settings))!=0||std::memcmp(display,floats,sizeof(display))!=0;
         if(effectChanged) {
-            wait();float scale=std::min(1.f,std::min(float(values[6])/width,float(values[7])/height));
+            wait();float scale=floats[3]>0?floats[3]:std::min(1.f,std::min(float(values[6])/width,float(values[7])/height));
             renderWidth=std::max(1u,UINT(width*scale));renderHeight=std::max(1u,UINT(height*scale));
-            vendor.configure(device.Get(),values[1],values[2],width,height,renderWidth,renderHeight);
-            for(int i=0;i<14;i++) {
-                UINT w=i==13?960:i>=10?width:renderWidth,h=i==13?660:i>=10?height:renderHeight;
-                DXGI_FORMAT f=i==0||i==1||i==8?DXGI_FORMAT_R32G32B32A32_FLOAT:i==3?DXGI_FORMAT_R32_FLOAT:
-                    i==4?DXGI_FORMAT_R16G16_FLOAT:i>=11?DXGI_FORMAT_R8G8B8A8_UNORM:DXGI_FORMAT_R16G16B16A16_FLOAT;
+            vendor.configure(device.Get(),values[1],values[2],width,height,renderWidth,renderHeight,floats[3],values[12]);
+            for(int i=0;i<32;i++) {
+                UINT w=i==13?960:(i>=10&&i<=12)?width:renderWidth,h=i==13?660:(i>=10&&i<=12)?height:renderHeight;
+                DXGI_FORMAT f=i==0||i==1||i==8?DXGI_FORMAT_R32G32B32A32_FLOAT:(i==3||i==18)?DXGI_FORMAT_R32_FLOAT:
+                    i==4?DXGI_FORMAT_R16G16_FLOAT:(i>=11&&i<=13)?DXGI_FORMAT_R8G8B8A8_UNORM:DXGI_FORMAT_R16G16B16A16_FLOAT;
                 texture(i,w,h,f);
-            }
-            for(UINT i=14;i<16;i++) {
-                D3D12_SHADER_RESOURCE_VIEW_DESC s{};s.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;s.ViewDimension=D3D12_SRV_DIMENSION_TEXTURE2D;s.Shader4ComponentMapping=D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;s.Texture2D.MipLevels=1;
-                auto cpu=heap->GetCPUDescriptorHandleForHeapStart();cpu.ptr+=i*stride;device->CreateShaderResourceView(nullptr,&s,cpu);
-                D3D12_UNORDERED_ACCESS_VIEW_DESC u{};u.Format=s.Format;u.ViewDimension=D3D12_UAV_DIMENSION_TEXTURE2D;cpu.ptr+=16*stride;device->CreateUnorderedAccessView(nullptr,nullptr,&u,cpu);
             }
             UINT64 total=0;auto d=textures[13].resource->GetDesc();device->GetCopyableFootprints(&d,0,1,0,&uiFootprint,nullptr,nullptr,&total);uiUpload=buffer(total);
         }
-        if(changed||effectChanged) { historyValid=false;accumulation=0; }
+        if(changed||effectChanged) { cacheValid=false;historyValid=false;accumulation=0; }
         if(settings[0]!=values[0]) accelerationBuilt=false;
         frameGeneration.mode(UINT(values[11]));
         std::memcpy(settings,values,sizeof(settings));std::memcpy(display,floats,sizeof(display));configured=true;
-        info=std::string(dxr&&settings[0]!=1?"DXR 1.1":"Software BVH")+" | "+vendor.status();
+        info=std::string(dxr&&settings[0]!=1?"DXR 1.1":"Software BVH")+" | "+vendor.status()+" | "+std::to_string(renderWidth)+"x"+std::to_string(renderHeight)+(settings[13]?" | Spatial radiance cache (experimental)":"");
     }
     void scene(const std::array<const void*,4>& data,const std::array<size_t,4>& sizes,int moving) {
         wait();for(int i=0;i<4;i++) { sceneBuffers[i]=buffer(sizes[i]);upload(sceneBuffers[i].Get(),data[i],sizes[i]); }
@@ -195,7 +199,7 @@ struct Backend {
             for(UINT i=0;i<triangleCount;i++) for(UINT j=0;j<3;j++) indices[i*3+j]=tri[i*4+j];
             rtIndices=buffer(indices.size()*4);upload(rtIndices.Get(),indices.data(),indices.size()*4);
         }
-        accelerationBuilt=false;sceneDirty=true;historyValid=false;accumulation=0;
+        accelerationBuilt=false;cacheValid=false;sceneDirty=true;historyValid=false;accumulation=0;
     }
     void barrier(ID3D12Resource* r) { D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_UAV;b.UAV.pResource=r;list->ResourceBarrier(1,&b); }
     void transition(int index,D3D12_RESOURCE_STATES state) {
@@ -204,7 +208,7 @@ struct Backend {
         b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;b.Transition.StateBefore=t.state;b.Transition.StateAfter=state;list->ResourceBarrier(1,&b);t.state=state;
     }
     void acceleration(float lift);
-    void render(const float* camera,float lift,float milliseconds,const void* ui,int uiMode);
+    void render(const float* camera,float lift,float milliseconds,const void* ui,int uiMode,bool uiDirty);
     void dispatch(int pipeline,Constants& c,UINT w,UINT h) {
         if(constantOffset+512>16384) throw std::runtime_error("Constant upload overflow");
         upload(constants.Get(),&c,sizeof(c),constantOffset);
@@ -212,8 +216,11 @@ struct Backend {
         list->SetComputeRootConstantBufferView(0,constants->GetGPUVirtualAddress()+constantOffset);constantOffset+=512;
         for(int i=0;i<4;i++) list->SetComputeRootShaderResourceView(i+1,sceneBuffers[i]->GetGPUVirtualAddress());
         list->SetComputeRootShaderResourceView(5,tlas?tlas->GetGPUVirtualAddress():0);
-        auto gpu=heap->GetGPUDescriptorHandleForHeapStart();list->SetComputeRootDescriptorTable(6,gpu);gpu.ptr+=16*stride;list->SetComputeRootDescriptorTable(7,gpu);
+        auto gpu=heap->GetGPUDescriptorHandleForHeapStart();list->SetComputeRootDescriptorTable(6,gpu);gpu.ptr+=32*stride;list->SetComputeRootDescriptorTable(7,gpu);
+        list->SetComputeRootShaderResourceView(8,cacheRead->GetGPUVirtualAddress());
+        list->SetComputeRootUnorderedAccessView(9,cacheWrite->GetGPUVirtualAddress());
         list->SetPipelineState(pipelines[pipeline].Get());list->Dispatch((w+7)/8,(h+7)/8,1);
     }
     static float halton(UINT index,UINT base) { float f=1,value=0;while(index) { f/=base;value+=f*(index%base);index/=base; }return value-.5f; }
 };
+

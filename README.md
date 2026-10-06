@@ -1,4 +1,8 @@
-# 4 Gewinnt – PBR Pathtraced Edition
+# 4 Gewinnt – DX12 / PBR Pathtraced Edition
+
+Neuer Branch `4-gewinnt-dx12-fertig`: DXR, FSR 4.1, DLSS SR/Ray Reconstruction,
+XeSS, AMD Ray Regeneration, experimenteller eigener Radiance Cache und Upscaling-Regler.
+[Funktionsumfang, Bedienung, SDKs und Prüfgrenzen](docs/dx12-fertig.md).
 
 Ein spielbares Vier-Gewinnt mit progressivem OpenGL-Compute-Pathtracing,
 Metall-/Kunststoffmaterialien, prozeduralem Holz und Stein sowie geometriegestütztem Denoising.
@@ -307,3 +311,4 @@ beliebige Spielszenen. Raum, Pausenmenü und Grafikseite wurden als tatsächlich
 OpenGL-Ausgaben visuell kontrolliert (1280×720, intern 640×360, 100 spp). Der konfigurierte Maven-/JDK-25-Build,
 interaktive Eingabe, Windows-/HiDPI-Verhalten und Leistung auf echten GPUs müssen
 zusätzlich auf der Zielplattform geprüft werden.
+

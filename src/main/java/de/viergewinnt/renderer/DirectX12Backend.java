@@ -10,6 +10,7 @@ public final class DirectX12Backend implements AutoCloseable {
     private float lift;
     private RenderSettings settings;
     private final ByteBuffer overlay=ByteBuffer.allocateDirect(960*660*4);
+    private boolean overlayDirty;
     private final float[] cameraData=new float[16];
     public DirectX12Backend() {
         Native.load();handle=Native.create(Boolean.getBoolean("pt.dx12.debug"));
@@ -24,7 +25,7 @@ public final class DirectX12Backend implements AutoCloseable {
     public boolean raytracingSupported() { return capabilities().hardwareRaytracing(); }
     public RenderCapabilities capabilities() {
         checkOpen();int bits=Native.capabilities(handle);
-        return new RenderCapabilities(true,(bits&1)!=0,(bits&2)!=0,(bits&4)!=0,Math.max(1,Math.min(4,bits>>>8)));
+        return new RenderCapabilities(true,(bits&1)!=0,(bits&2)!=0,(bits&4)!=0,Math.max(1,Math.min(4,(bits>>>8)&255)),(bits&8)!=0,(bits&16)!=0,(bits&32)!=0);
     }
     public void attachWindow(long hwnd,int width,int height) { checkOpen();Native.attach(handle,hwnd,width,height); }
     public void resize(int width,int height) { checkOpen();Native.resize(handle,width,height);if(settings!=null) applySettings(settings); }
@@ -32,8 +33,8 @@ public final class DirectX12Backend implements AutoCloseable {
         checkOpen();GraphicsOptions g=value.graphics();
         Native.configure(handle,new int[]{g.raytracing().ordinal(),g.upscaler().ordinal(),g.quality().ordinal(),value.denoiser().ordinal(),
             value.bounces(),value.samplesPerFrame(),value.maxWidth(),value.maxHeight(),g.denoisePasses(),value.taa()?1:0,
-            !Boolean.getBoolean("pt.benchmark")&&g.vsync()?1:0,g.frameGeneration()},new float[]{value.exposure(),value.denoiseStrength(),g.sharpness()});
-        settings=value;
+            !Boolean.getBoolean("pt.benchmark")&&g.vsync()?1:0,g.frameGeneration(),g.reconstruction().ordinal(),g.radianceCache()?1:0},new float[]{value.exposure(),value.denoiseStrength(),g.sharpness(),g.renderScale()});
+        settings=value;overlayDirty=true;
     }
     public void setScene(Scene scene) {
         checkOpen();NativeScene data=NativeScene.from(scene);Native.setScene(handle,data.buffers(),data.movingVertexStart());lift=0;
@@ -45,11 +46,11 @@ public final class DirectX12Backend implements AutoCloseable {
         overlay.clear();
         int[] pixels=image.getRGB(0,0,960,660,null,0,960);
         for(int argb:pixels) overlay.put((byte)(argb>>16)).put((byte)(argb>>8)).put((byte)argb).put((byte)(argb>>24));
-        overlay.flip();
+        overlay.flip();overlayDirty=true;
     }
     public void render(Camera camera,float dt,int overlayMode) {
         checkOpen();put(0,camera.position());put(4,camera.forward());put(8,camera.right());put(12,camera.up());
-        Native.render(handle,cameraData,lift,dt*1000,overlay,overlayMode);
+        Native.render(handle,cameraData,lift,dt*1000,overlay,overlayMode,overlayDirty);overlayDirty=false;
     }
     private void put(int offset,Vec3 v) { cameraData[offset]=v.x;cameraData[offset+1]=v.y;cameraData[offset+2]=v.z; }
     private void checkOpen() { if(handle==0) throw new IllegalStateException("DirectX 12 Backend ist geschlossen."); }
@@ -71,7 +72,7 @@ public final class DirectX12Backend implements AutoCloseable {
         private static native void resize(long handle,int width,int height);
         private static native void configure(long handle,int[] settings,float[] display);
         private static native void setScene(long handle,ByteBuffer[] buffers,int movingStart);
-        private static native void render(long handle,float[] camera,float lift,float ms,ByteBuffer ui,int mode);
+        private static native void render(long handle,float[] camera,float lift,float ms,ByteBuffer ui,int mode,boolean uiDirty);
         private static native void beginFrame(long handle);
         private static native void destroy(long handle);
     }

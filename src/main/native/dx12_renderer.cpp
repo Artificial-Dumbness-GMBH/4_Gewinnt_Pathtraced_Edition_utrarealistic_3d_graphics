@@ -3,11 +3,14 @@
 void Backend::acceleration(float lift) {
     if(!dxr||settings[0]==1) return;
     if(accelerationBuilt&&!sceneDirty&&lift==previousLift) return;
-    auto vertices=baseVertices;
-    if(movingStart>=0) for(size_t i=size_t(movingStart)*4+1;i<vertices.size();i+=4) vertices[i]+=lift;
-    upload(rtVertices.Get(),vertices.data(),vertices.size()*4);
+    // Update only the animated tail; static vertices were uploaded with the scene.
+    if(movingStart>=0) {
+        std::vector<float> vertices(baseVertices.begin()+size_t(movingStart)*4,baseVertices.end());
+        for(size_t i=1;i<vertices.size();i+=4) vertices[i]+=lift;
+        upload(rtVertices.Get(),vertices.data(),vertices.size()*4,size_t(movingStart)*16);
+    }
     D3D12_RAYTRACING_GEOMETRY_DESC geo{};geo.Type=D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;geo.Flags=D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
-    geo.Triangles.VertexBuffer={rtVertices->GetGPUVirtualAddress(),16};geo.Triangles.VertexCount=UINT(vertices.size()/4);geo.Triangles.VertexFormat=DXGI_FORMAT_R32G32B32_FLOAT;
+    geo.Triangles.VertexBuffer={rtVertices->GetGPUVirtualAddress(),16};geo.Triangles.VertexCount=UINT(baseVertices.size()/4);geo.Triangles.VertexFormat=DXGI_FORMAT_R32G32B32_FLOAT;
     geo.Triangles.IndexBuffer=rtIndices->GetGPUVirtualAddress();geo.Triangles.IndexCount=triangleCount*3;geo.Triangles.IndexFormat=DXGI_FORMAT_R32_UINT;
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS input{};input.Type=D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
     input.Flags=D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE|D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
@@ -30,10 +33,11 @@ void Backend::acceleration(float lift) {
     b={};b.Inputs=topInput;b.Inputs.InstanceDescs=instance->GetGPUVirtualAddress();b.DestAccelerationStructureData=tlas->GetGPUVirtualAddress();b.ScratchAccelerationStructureData=scratch->GetGPUVirtualAddress();
     list->BuildRaytracingAccelerationStructure(&b,0,nullptr);barrier(tlas.Get());accelerationBuilt=true;
 }
-void Backend::render(const float* camera,float lift,float milliseconds,const void* ui,int uiMode) {
+void Backend::render(const float* camera,float lift,float milliseconds,const void* ui,int uiMode,bool uiDirty) {
     if(!configured||!triangleCount) throw std::runtime_error("Scene/settings not initialized");
     frameGeneration.marker(1);
     bool moved=lift!=previousLift||sceneDirty;
+    if(moved) cacheValid=false;
     // PreviousCamera.w stores jitter; compare basis xyz only.
     for(int v=0;v<4;v++) for(int i=0;i<3;i++) moved|=previousCamera[v*4+i]!=camera[v*4+i];
     if(moved) accumulation=0;
@@ -42,35 +46,59 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
     checked(allocator->Reset(),"Reset allocator");checked(list->Reset(allocator.Get(),nullptr),"Reset command list");constantOffset=0;
     acceleration(lift);
     Constants c{};std::memcpy(c.camera,camera,sizeof(c.camera));std::memcpy(c.previous,previousCamera,sizeof(c.previous));
-    c.counts[0]=vendor.active()?0:accumulation;c.counts[1]=sequence++;c.counts[2]=settings[5];c.counts[3]=settings[4];
-    c.geometry[0]=triangleCount;c.geometry[1]=UINT(movingStart);c.geometry[2]=dxr&&settings[0]!=1;c.geometry[3]=settings[9]||vendor.active();
+    c.counts[0]=(vendor.active()||vendor.regenerationActive()||settings[13])?0:accumulation;c.counts[1]=sequence++;c.counts[2]=settings[5];c.counts[3]=settings[4];
+    c.geometry[0]=triangleCount;c.geometry[1]=UINT(movingStart);c.geometry[2]=dxr&&settings[0]!=1;c.geometry[3]=settings[9]||vendor.active()||vendor.regenerationActive();
     UINT phase=std::max(1u,UINT(std::ceil(8.f*width*width/(float(renderWidth)*renderWidth))));
     float jx=c.geometry[3]?halton(c.counts[1]%phase+1,2):0,jy=c.geometry[3]?halton(c.counts[1]%phase+1,3):0;
     c.motion[0]=lift;c.motion[1]=previousLift;c.motion[2]=jx;c.motion[3]=jy;
     c.dimensions[0]=float(renderWidth);c.dimensions[1]=float(renderHeight);c.dimensions[2]=float(width);c.dimensions[3]=float(height);
     c.options[0]=display[0];c.options[1]=display[1];c.options[2]=display[2];
-    c.options[3]=settings[9]&&!vendor.active()&&lift==previousLift?.85f/(1+.15f*accumulation):0;
+    c.options[3]=settings[9]&&!vendor.active()&&!vendor.regenerationActive()&&lift==previousLift?.85f/(1+.15f*accumulation):0;
     c.post[2]=!reset;c.post[3]=uiMode;
+    c.features[0]=settings[13];c.features[1]=cacheValid;c.features[2]=vendor.regenerationActive();c.features[3]=vendor.rrActive();
+    if(settings[13]) {
+        if(!cacheValid) { dispatch(8,c,128,128);barrier(cacheWrite.Get()); }
+        D3D12_RESOURCE_BARRIER barriers[2]{};
+        for(auto& b:barriers) { b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES; }
+        barriers[0].Transition.pResource=cacheWrite.Get();barriers[0].Transition.StateBefore=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;barriers[0].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_SOURCE;
+        barriers[1].Transition.pResource=cacheRead.Get();barriers[1].Transition.StateBefore=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;barriers[1].Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;
+        list->ResourceBarrier(2,barriers);list->CopyResource(cacheRead.Get(),cacheWrite.Get());
+        for(auto& b:barriers) std::swap(b.Transition.StateBefore,b.Transition.StateAfter);list->ResourceBarrier(2,barriers);
+    }
+    std::array<ID3D12Resource*,32> resources{};for(int i=0;i<32;i++) resources[i]=textures[i].resource.Get();
+    if(vendor.reconstructing()) for(int i=14;i<=24;i++) transition(i,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if(vendor.regenerationActive()) transition(30,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     for(int i=0;i<5;i++) transition(i,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     dispatch(c.geometry[2]?1:0,c,renderWidth,renderHeight);
     for(int i=0;i<5;i++) { barrier(textures[i].resource.Get());transition(i,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE); }
+    if(settings[13]) barrier(cacheWrite.Get());
+    if(vendor.reconstructing()) for(int i=14;i<=24;i++) transition(i,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     UINT source=0;
-    for(int i=0;i<(settings[3]==0?0:settings[3]==1?1:settings[8]);i++) {
+    if(vendor.regenerationActive()) {
+        transition(30,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        for(int i=25;i<=28;i++) transition(i,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        vendor.regenerate(list.Get(),resources.data(),camera,previousCamera,renderWidth,renderHeight,c.counts[1],jx,jy,reset);
+        for(int i=25;i<=28;i++) { barrier(textures[i].resource.Get());transition(i,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE); }
+        transition(29,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(7,c,renderWidth,renderHeight);transition(29,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);source=29;
+    }
+    for(int i=0;i<(vendor.reconstructing()||settings[3]==0?0:settings[3]==1?1:settings[8]);i++) {
         int dest=5+i%2;transition(dest,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         c.post[0]=i;c.post[1]=source;dispatch(2,c,renderWidth,renderHeight);
         transition(dest,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);source=dest;
     }
-    c.post[1]=source;transition(9,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(3,c,renderWidth,renderHeight);transition(9,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    transition(7,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);transition(8,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(4,c,renderWidth,renderHeight);
-    transition(7,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);transition(8,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    source=9;
+    // Vendor reconstruction replaces our temporal filter and history passes.
+    if(!vendor.reconstructing()&&!vendor.active()) {
+        c.post[1]=source;transition(9,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(3,c,renderWidth,renderHeight);transition(9,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        transition(7,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);transition(8,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(4,c,renderWidth,renderHeight);
+        transition(7,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);transition(8,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);source=9;
+    }
     if(vendor.active()) {
         transition(10,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        vendor.execute(list.Get(),textures[9].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),textures[10].resource.Get(),renderWidth,renderHeight,width,height,jx,jy,milliseconds,reset);
+        vendor.execute(list.Get(),textures[source].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),textures[10].resource.Get(),renderWidth,renderHeight,width,height,jx,jy,milliseconds,reset,resources.data(),camera);
         barrier(textures[10].resource.Get());transition(10,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);source=10;
     }
     c.post[1]=source;transition(11,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(5,c,width,height);transition(11,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    if(uiMode!=0&&ui) {
+    if(uiMode!=0&&ui&&uiDirty) {
         void* mapped=nullptr;D3D12_RANGE empty{0,0};checked(uiUpload->Map(0,&empty,&mapped),"Map UI upload");
         for(UINT y=0;y<660;y++) std::memcpy(static_cast<char*>(mapped)+uiFootprint.Offset+y*uiFootprint.Footprint.RowPitch,static_cast<const char*>(ui)+y*960*4,960*4);
         uiUpload->Unmap(0,nullptr);transition(13,D3D12_RESOURCE_STATE_COPY_DEST);
@@ -78,7 +106,7 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
         to.pResource=textures[13].resource.Get();to.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;list->CopyTextureRegion(&to,0,0,0,&from,nullptr);transition(13,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
     transition(12,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);dispatch(6,c,width,height);transition(12,D3D12_RESOURCE_STATE_COPY_SOURCE);
-    frameGeneration.tag(list.Get(),textures[11].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),camera,renderWidth,renderHeight,jx,jy,milliseconds,reset);
+    frameGeneration.tag(list.Get(),textures[11].resource.Get(),textures[3].resource.Get(),textures[4].resource.Get(),camera,renderWidth,renderHeight,jx,jy,milliseconds,reset,resources.data(),camera);
     auto target=back[swap->GetCurrentBackBufferIndex()].Get();
     D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition.pResource=target;b.Transition.Subresource=D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     b.Transition.StateBefore=D3D12_RESOURCE_STATE_PRESENT;b.Transition.StateAfter=D3D12_RESOURCE_STATE_COPY_DEST;list->ResourceBarrier(1,&b);
@@ -88,5 +116,5 @@ void Backend::render(const float* camera,float lift,float milliseconds,const voi
     HRESULT presented=swap->Present(settings[10]?1:0,!settings[10]&&tearing?DXGI_PRESENT_ALLOW_TEARING:0);
     frameGeneration.marker(5);wait();checked(presented,"Present");frameGeneration.presented();
     std::memcpy(previousCamera,camera,16*sizeof(float));previousCamera[3]=jx;previousCamera[7]=jy;
-    previousLift=lift;historyValid=true;sceneDirty=false;accumulation=std::min(accumulation+1,1000000u);
+    cacheValid=settings[13]&&lift==previousLift;previousLift=lift;historyValid=true;sceneDirty=false;accumulation=std::min(accumulation+1,1000000u);
 }

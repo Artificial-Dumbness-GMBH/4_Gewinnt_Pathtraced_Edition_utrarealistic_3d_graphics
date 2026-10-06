@@ -20,7 +20,7 @@ $dependencies = @("--batch-mode", "org.apache.maven.plugins:maven-dependency-plu
 & mvn @dependencies
 if ($LASTEXITCODE -ne 0) { throw "Runtime dependency collection failed" }
 Copy-Item "target/viergewinnt-1.0-SNAPSHOT.jar" "$inputDirectory/game.jar"
-foreach ($file in @("viergewinnt_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll", "libxess.dll", "libxess_fg.dll", "libxell.dll", "FSR-LICENSE.md", "XESS-LICENSE.txt")) {
+foreach ($file in @("viergewinnt_dx12.dll", "amd_fidelityfx_upscaler_dx12.dll", "amd_fidelityfx_denoiser_dx12.dll", "nvngx_dlss.dll", "nvngx_dlssd.dll", "libxess.dll", "libxess_fg.dll", "libxell.dll", "FSR-LICENSE.md", "XESS-LICENSE.txt", "DLSS-LICENSE.txt")) {
     Copy-Item "target/dx12/Release/$file" $nativeDirectory
 }
 # Preserve project notices and third-party notices embedded in jars/runtime.

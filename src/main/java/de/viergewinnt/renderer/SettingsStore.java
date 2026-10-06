@@ -25,7 +25,8 @@ public final class SettingsStore {
                     GraphicsOptions.Quality.valueOf(p.getProperty("quality","QUALITY")),
                     Integer.parseInt(p.getProperty("denoisePasses","4")),Float.parseFloat(p.getProperty("sharpness","0.2")),
                     Boolean.parseBoolean(p.getProperty("vsync","true")),Integer.parseInt(p.getProperty("frameGeneration","1")),
-                    Integer.parseInt(p.getProperty("frameLimit","0"))));
+                    Integer.parseInt(p.getProperty("frameLimit","0")),Float.parseFloat(p.getProperty("renderScale","0")),
+                    GraphicsOptions.Reconstruction.valueOf(p.getProperty("reconstruction","OFF")),Boolean.parseBoolean(p.getProperty("radianceCache","false"))));
         } catch(IOException|IllegalArgumentException|NullPointerException e) {
             System.err.println("Grafikeinstellungen konnten nicht geladen werden; verwende Standardwerte: "+e.getMessage());
             return RenderSettings.defaults();
@@ -42,6 +43,8 @@ public final class SettingsStore {
         p.setProperty("denoisePasses",Integer.toString(g.denoisePasses()));p.setProperty("sharpness",Float.toString(g.sharpness()));
         p.setProperty("vsync",Boolean.toString(g.vsync()));p.setProperty("frameGeneration",Integer.toString(g.frameGeneration()));
         p.setProperty("frameLimit",Integer.toString(g.frameLimit()));
+        p.setProperty("renderScale",Float.toString(g.renderScale()));p.setProperty("reconstruction",g.reconstruction().name());
+        p.setProperty("radianceCache",Boolean.toString(g.radianceCache()));
         Path temp=Files.createTempFile(path.getParent(),"render-",".tmp");
         try {
             try(OutputStream out=Files.newOutputStream(temp)) { p.store(out,"4 Gewinnt graphics settings"); }
@@ -50,3 +53,4 @@ public final class SettingsStore {
         } finally { Files.deleteIfExists(temp); }
     }
 }
+

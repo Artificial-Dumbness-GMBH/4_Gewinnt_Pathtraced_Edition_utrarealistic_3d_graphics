@@ -1,4 +1,5 @@
 #include "common.hlsli"
+#include "radiance_cache.hlsli"
 static const float PI=3.14159265359;
 static uint rng;
 float randomFloat() {
@@ -125,16 +126,21 @@ float masking(float nv,float roughness) {
     return 2*nv/max(nv+sqrt(a*a+(1-a*a)*nv*nv),1e-7);
 }
 float specularChance(float metallic) { return lerp(.35,.9,metallic); }
-float3 brdf(float3 n,float3 v,float3 l,float3 base,float roughness,float metallic,out float pdf) {
+float3 brdfSplit(float3 n,float3 v,float3 l,float3 base,float roughness,float metallic,out float pdf,out float3 diffuse,out float3 specular) {
+    diffuse=specular=0;
     float nv=max(dot(n,v),0),nl=max(dot(n,l),0);pdf=0;
     if(nv<=0||nl<=0||dot(v+l,v+l)<1e-10) return float3(0,0,0);
     float3 h=normalize(v+l);float nh=max(dot(n,h),0),vh=max(dot(v,h),1e-6);
     float3 f=fresnel(lerp(float3(.04,.04,.04),base,metallic),vh);
-    float3 diffuse=(1-f)*(1-metallic)*base/PI;
+    diffuse=(1-f)*(1-metallic)*base/PI;
 
     float d=distribution(nh,roughness),chance=specularChance(metallic);
     pdf=lerp(nl/PI,d*nh/(4*vh),chance);
-    return diffuse+f*d*masking(nv,roughness)*masking(nl,roughness)/max(4*nv*nl,1e-7);
+    specular=f*d*masking(nv,roughness)*masking(nl,roughness)/max(4*nv*nl,1e-7);
+    return diffuse+specular;
+}
+float3 brdf(float3 n,float3 v,float3 l,float3 base,float roughness,float metallic,out float pdf) {
+    float3 diffuse,specular;return brdfSplit(n,v,l,base,roughness,metallic,pdf,diffuse,specular);
 }
 float3 sampleDirection(float3 n,float3 v,float roughness,float metallic) {
     if(randomFloat()>specularChance(metallic)) return cosineHemisphere(n);
@@ -149,23 +155,40 @@ float lightPdf(float3 from,float3 hitPoint,float3 direction) {
     return lightCosine>0?dot(hitPoint-from,hitPoint-from)/(4*lightSize.x*lightSize.z*lightCosine):0;
 }
 float powerWeight(float a,float b) { return a*a/max(a*a+b*b,1e-20); }
-float3 directLight(float3 hitPoint,float3 n,float3 v,float3 base,float roughness,float metallic,bool lastBounce) {
+float3 directLight(float3 hitPoint,float3 n,float3 v,float3 base,float roughness,float metallic,bool lastBounce,out float3 diffuse,out float3 specular) {
+    diffuse=specular=0;
     float3 target=lightPosition+float3((2*randomFloat()-1)*lightSize.x,0,(2*randomFloat()-1)*lightSize.z);
     float3 delta=target-hitPoint;float distanceToLight=length(delta);float3 l=delta/distanceToLight;
     if(dot(n,l)<=0||l.y<=0) return float3(0,0,0);
     if(occluded(hitPoint+n*.001,l,distanceToLight-.003)) return float3(0,0,0);
-    float pdf;float3 f=brdf(n,v,l,base,roughness,metallic,pdf);
+    float pdf;float3 f=brdfSplit(n,v,l,base,roughness,metallic,pdf,diffuse,specular);
     float lp=lightPdf(hitPoint,target,l);
     // No BSDF continuation at the last bounce, so there is no competing estimator.
-    return lightRadiance*f*max(dot(n,l),0)*(lastBounce?1:powerWeight(lp,pdf))/max(lp,1e-7);
+    float3 weight=lightRadiance*max(dot(n,l),0)*(lastBounce?1:powerWeight(lp,pdf))/max(lp,1e-7);
+    diffuse*=weight;specular*=weight;return diffuse+specular;
 }
-float3 trace(float3 origin,float3 direction) {
-    float3 radiance=float3(0,0,0),throughput=float3(1,1,1),previousPoint=origin;
+struct PathSample {
+    float3 directDiffuse,directSpecular,indirectDiffuse,indirectSpecular,skip;
+    float hitDistance;
+};
+float3 sampleSum(PathSample s) { return s.directDiffuse+s.directSpecular+s.indirectDiffuse+s.indirectSpecular+s.skip; }
+void indirect(inout PathSample s,float3 diffuseWeight,float3 specularWeight,float3 incident) {
+    s.indirectDiffuse+=diffuseWeight*incident;s.indirectSpecular+=specularWeight*incident;
+}
+PathSample trace(float3 origin,float3 direction,int primaryHit,float primaryDistance,float3 primaryNormal,bool reusePrimary) {
+    PathSample result=(PathSample)0;result.hitDistance=65504;
+    float3 throughput=1,diffuseWeight=0,specularWeight=0,previousPoint=origin;
     float previousPdf=0;
+    bool training=features.x!=0&&(rng&7u)==0;
+    uint trainingKey=0;float3 trainingStart=0,trainingThroughput=0;
     for(int bounce=0;bounce<maxBounces;bounce++) {
-        float distance;float3 normal;int hit=intersectScene(origin,direction,distance,normal);
+        float distance;float3 normal;int hit;
+        if(bounce==0&&reusePrimary) { hit=primaryHit;distance=primaryDistance;normal=primaryNormal; }
+        else hit=intersectScene(origin,direction,distance,normal);
+        if(bounce==1) result.hitDistance=hit>=0?min(distance,65504):65504;
         if(hit<0) {
-            radiance+=throughput*lerp(float3(.035,.045,.07),float3(.22,.30,.45),clamp(direction.y*.5+.5,0,1));break;
+            float3 sky=lerp(float3(.035,.045,.07),float3(.22,.30,.45),clamp(direction.y*.5+.5,0,1));
+            if(bounce==0) result.skip+=sky;else indirect(result,diffuseWeight,specularWeight,sky);break;
         }
         float3 hitPoint=origin+direction*distance;
         uint materialIndex=triangles[hit].w;Material m=materials[materialIndex];
@@ -175,21 +198,37 @@ float3 trace(float3 origin,float3 direction) {
                 if(direction.y<=0) break;
                 if(bounce>0) weight=powerWeight(previousPdf,lightPdf(previousPoint,hitPoint,direction));
             }
-            radiance+=throughput*m.emission.rgb*weight;break;
+            if(bounce==0) result.skip+=m.emission.rgb*weight;
+            else indirect(result,diffuseWeight,specularWeight,m.emission.rgb*weight);break;
         }
         float roughness;float3 base=surfaceColor(m,hitPoint,roughness),view=-direction;
-        radiance+=throughput*directLight(hitPoint,normal,view,base,roughness,m.surface.y,bounce==maxBounces-1);
+        bool cacheSurface=features.x!=0&&bounce==1&&roughness>=.8&&m.surface.y<.01;
+        if(cacheSurface) {
+            uint key=cacheHash(hitPoint,normal,materialIndex);float3 cached;
+            if(!training&&cacheLookup(key,cached)) { indirect(result,diffuseWeight,specularWeight,cached);break; }
+            if(training) { trainingKey=key;trainingStart=sampleSum(result);trainingThroughput=throughput; }
+        }
+        float3 dd,ds;float3 direct=directLight(hitPoint,normal,view,base,roughness,m.surface.y,bounce==maxBounces-1,dd,ds);
+        if(bounce==0) { result.directDiffuse+=dd;result.directSpecular+=ds; }
+        else indirect(result,diffuseWeight,specularWeight,direct);
         if(bounce==maxBounces-1) break;
         float3 next=sampleDirection(normal,view,roughness,m.surface.y);
-        float pdf;float3 f=brdf(normal,view,next,base,roughness,m.surface.y,pdf);
+        float pdf;float3 fd,fs;float3 f=brdfSplit(normal,view,next,base,roughness,m.surface.y,pdf,fd,fs);
         if(pdf<=1e-8) break;
-        throughput*=f*max(dot(normal,next),0)/pdf;
+        float cosine=max(dot(normal,next),0)/pdf;
+        if(bounce==0) { diffuseWeight=fd*cosine;specularWeight=fs*cosine; }
+        else { diffuseWeight*=f*cosine;specularWeight*=f*cosine; }
+        throughput=diffuseWeight+specularWeight;
         if(max(throughput.r,max(throughput.g,throughput.b))<1e-5) break;
-        // Fixed bounce budget: no roulette probability to fold into MIS densities.
-        previousPoint=hitPoint;previousPdf=pdf;
-        origin=hitPoint+normal*.001;direction=next;
+        previousPoint=hitPoint;previousPdf=pdf;origin=hitPoint+normal*.001;direction=next;
     }
-    return radiance;
+    if(trainingKey!=0&&all(trainingThroughput>1e-5)) cacheTrain(trainingKey,(sampleSum(result)-trainingStart)/trainingThroughput);
+    return result;
+}
+float2 octNormal(float3 n) {
+    n/=max(abs(n.x)+abs(n.y)+abs(n.z),1e-8);
+    float2 enc=n.xy;if(n.z<0) enc=(1-abs(enc.yx))*float2(enc.x>=0?1:-1,enc.y>=0?1:-1);
+    return enc*.5+.5;
 }
 
 [numthreads(8,8,1)]
@@ -199,27 +238,56 @@ void main(uint3 tid:SV_DispatchThreadID) {
     float2 jitter=geometry.w!=0?motion.zw:float2(0,0);
     float3 guideRay=cameraRay(float2(pixel)+.5+jitter,size),normal;float depth;
     int hit=intersectScene(cameraPosition,guideRay,depth,normal);
-    float3 albedo=0,world=cameraPosition+guideRay*(hit>=0?depth:1000);
+    float roughness=1,metallic=0;float3 albedo=0,world=cameraPosition+guideRay*(hit>=0?depth:1000);
     float materialId=-1;
     if(hit>=0) {
-        float roughness;materialId=float(triangles[hit].w);
+        materialId=float(triangles[hit].w);metallic=materials[triangles[hit].w].surface.y;
         albedo=surfaceColor(materials[triangles[hit].w],world,roughness);
     } else depth=0;
+    if(features.z!=0||features.w!=0) {
+        float3 diffuseAlbedo=albedo*(1-metallic);
+        // Schlick approximation; the BRDF feature map is deliberately separate from base color.
+        float3 specularAlbedo=hit>=0?fresnel(lerp(float3(.04,.04,.04),albedo,metallic),saturate(dot(normal,-guideRay))):0;
+        outputs[14][pixel]=float4(normal,roughness);
+        outputs[15][pixel]=float4(diffuseAlbedo,1);outputs[16][pixel]=float4(specularAlbedo,1);
+        outputs[20][pixel]=float4(octNormal(normal),roughness,0);
+    }
     outputs[1][pixel]=float4(normal,depth);
     outputs[2][pixel]=float4(albedo,materialId);
     float viewZ=dot(world-cameraPosition,cameraForward);
     outputs[3][pixel]=float4(saturate(1000.0/999.9-100.0/(999.9*max(viewZ,.1))),0,0,0);
     if(hit>=0&&movingVertexStart>=0&&triangles[hit].x>=uint(movingVertexStart)) world.y+=motion.y-motion.x;
+    float oldViewZ=dot(world-previousPosition.xyz,previousForward.xyz);
     float2 velocity=projectPrevious(world)-(float2(pixel)+.5+jitter);
     outputs[4][pixel]=float4(velocity,0,0);
+    if(features.z!=0) {
+        outputs[18][pixel]=float4(viewZ,0,0,0);
+        outputs[19][pixel]=float4(velocity/dimensions.xy,oldViewZ-viewZ,0);
+    }
+    PathSample total=(PathSample)0;
     float3 sampleColor=0;
     for(uint sampleIndex=0;sampleIndex<samplesPerFrame;sampleIndex++) {
         rng=(tid.x+tid.y*size.x)^((sampleSequence*samplesPerFrame+sampleIndex+1u)*277803737u);
         float2 offset=geometry.w!=0?.5+jitter:float2(randomFloat(),randomFloat());
-        sampleColor+=trace(cameraPosition,cameraRay(float2(pixel)+offset,size));
+        PathSample sample=trace(cameraPosition,cameraRay(float2(pixel)+offset,size),hit,depth,normal,geometry.w!=0);
+        sampleColor+=sampleSum(sample);
+        if(features.z!=0) {
+            total.directDiffuse+=sample.directDiffuse;total.directSpecular+=sample.directSpecular;
+            total.indirectDiffuse+=sample.indirectDiffuse;total.indirectSpecular+=sample.indirectSpecular;
+            total.skip+=sample.skip;total.hitDistance+=sample.hitDistance;
+        }
+    }
+    if(features.z!=0) {
+        float3 da=max(outputs[15][pixel].rgb,1e-5),sa=max(outputs[16][pixel].rgb,1e-5);
+        outputs[21][pixel]=float4(total.directDiffuse/(samplesPerFrame*da),0);
+        outputs[22][pixel]=float4(total.directSpecular/(samplesPerFrame*sa),0);
+        outputs[23][pixel]=float4(total.indirectDiffuse/(samplesPerFrame*da),total.hitDistance/samplesPerFrame);
+        outputs[24][pixel]=float4(total.indirectSpecular/(samplesPerFrame*sa),total.hitDistance/samplesPerFrame);
+        outputs[30][pixel]=float4(total.skip/samplesPerFrame,1);
     }
     sampleColor/=samplesPerFrame;
     float3 mean=sampleColor;
     if(frameIndex>0) { float3 previous=outputs[0][pixel].rgb;mean=previous+(sampleColor-previous)/float(frameIndex+1); }
     outputs[0][pixel]=float4(mean,1);
 }
+

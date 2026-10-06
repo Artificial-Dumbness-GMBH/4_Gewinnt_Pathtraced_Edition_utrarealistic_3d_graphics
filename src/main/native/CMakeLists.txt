@@ -5,19 +5,20 @@ if(NOT WIN32)
 endif()
 find_package(JNI REQUIRED)
 find_program(DXC_EXECUTABLE NAMES dxc REQUIRED)
-set(FSR_ROOT "" CACHE PATH "FidelityFX SDK v2.2.0 root (optional)")
+set(FSR_ROOT "" CACHE PATH "FidelityFX SDK v2.3.0 root (optional)")
+set(DLSS_ROOT "" CACHE PATH "NVIDIA DLSS SDK root (optional, MSVC only)")
 set(XESS_ROOT "" CACHE PATH "XeSS SDK v3.0.2 root (optional)")
 function(compile_shader name file entry model)
     add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${name}.h"
         COMMAND "${DXC_EXECUTABLE}" -T "${model}" -E "${entry}" -HV 2021 -O3
             ${ARGN} -Fh "${CMAKE_CURRENT_BINARY_DIR}/${name}.h" -Vn "${name}"
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${file}"
-        DEPENDS "shaders/${file}" shaders/common.hlsli VERBATIM)
+        DEPENDS "shaders/${file}" shaders/common.hlsli shaders/radiance_cache.hlsli VERBATIM)
     set(SHADER_HEADERS ${SHADER_HEADERS} "${CMAKE_CURRENT_BINARY_DIR}/${name}.h" PARENT_SCOPE)
 endfunction()
 compile_shader(trace_sw trace.hlsl main cs_6_0)
 compile_shader(trace_hw trace.hlsl main cs_6_5 -D HARDWARE_RT=1)
-foreach(pass denoise temporal history tonemap composite)
+foreach(pass denoise temporal history tonemap composite regen_compose cache_clear)
     compile_shader(${pass} post.hlsl ${pass} cs_6_0)
 endforeach()
 add_library(viergewinnt_dx12 SHARED dx12_bridge.cpp dx12_renderer.cpp ${SHADER_HEADERS})
@@ -34,9 +35,10 @@ elseif(MINGW)
 endif()
 if(FSR_ROOT)
     target_compile_definitions(viergewinnt_dx12 PRIVATE PT_FSR)
-    target_include_directories(viergewinnt_dx12 PRIVATE "${FSR_ROOT}/Kits/FidelityFX/api/include" "${FSR_ROOT}/Kits/FidelityFX/upscalers/include")
+    target_include_directories(viergewinnt_dx12 PRIVATE "${FSR_ROOT}/Kits/FidelityFX/api/include" "${FSR_ROOT}/Kits/FidelityFX/upscalers/include" "${FSR_ROOT}/Kits/FidelityFX/denoisers/include")
     add_custom_command(TARGET viergewinnt_dx12 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${FSR_ROOT}/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
+        "${FSR_ROOT}/Kits/FidelityFX/signedbin/amd_fidelityfx_upscaler_dx12.dll"
+        "${FSR_ROOT}/Kits/FidelityFX/signedbin/amd_fidelityfx_denoiser_dx12.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
 endif()
 if(XESS_ROOT)
     target_compile_definitions(viergewinnt_dx12 PRIVATE PT_XESS)
@@ -45,3 +47,24 @@ if(XESS_ROOT)
         "${XESS_ROOT}/bin/libxess.dll" "${XESS_ROOT}/bin/libxess_fg.dll" "${XESS_ROOT}/bin/libxell.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
 endif()
 set_target_properties(viergewinnt_dx12 PROPERTIES PREFIX "" OUTPUT_NAME viergewinnt_dx12)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(camera_matrices_test camera_matrices_test.cpp)
+    target_compile_features(camera_matrices_test PRIVATE cxx_std_17)
+    add_test(NAME camera_matrices COMMAND camera_matrices_test)
+endif()
+
+
+if(DLSS_ROOT)
+    if(NOT MSVC)
+        message(FATAL_ERROR "The optional NGX integration requires MSVC and NVIDIA's Windows SDK library")
+    endif()
+    target_compile_definitions(viergewinnt_dx12 PRIVATE PT_DLSS)
+    target_include_directories(viergewinnt_dx12 PRIVATE "${DLSS_ROOT}/include")
+    target_link_libraries(viergewinnt_dx12 PRIVATE
+        optimized "${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_s.lib"
+        debug "${DLSS_ROOT}/lib/Windows_x86_64/x64/nvsdk_ngx_s_dbg.lib")
+    add_custom_command(TARGET viergewinnt_dx12 POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlss.dll" "${DLSS_ROOT}/lib/Windows_x86_64/rel/nvngx_dlssd.dll" "$<TARGET_FILE_DIR:viergewinnt_dx12>")
+endif()

@@ -2,9 +2,9 @@ name: DX12 and Java build
 on:
   workflow_dispatch:
   pull_request:
-    branches: [dx12]
+    branches: [dx12, 4-gewinnt-dx12-fertig]
   push:
-    branches: [dx12]
+    branches: [dx12, 4-gewinnt-dx12-fertig]
 permissions:
   contents: read
 jobs:
@@ -20,12 +20,14 @@ jobs:
           cache: maven
       - name: Java regression tests
         run: mvn --batch-mode test
-      - name: DX12 with FSR and XeSS
+      - name: DX12 with FSR, DLSS and XeSS
         shell: pwsh
         run: ./build-dx12.ps1
       - name: DX12 without vendor SDKs
         shell: pwsh
         run: ./build-dx12.ps1 -WithoutVendorSDKs -BuildDirectory target/dx12-basic
+      - name: SDK camera matrix regression
+        run: ctest --test-dir target/dx12 -C Release --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: dx12-windows-native

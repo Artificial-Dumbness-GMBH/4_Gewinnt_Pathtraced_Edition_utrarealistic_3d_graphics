@@ -150,7 +150,9 @@ public class Window {
                         if(cursorX[0]!=lastMouseX||cursorY[0]!=lastMouseY) menu.hover(point[0],point[1]);
                         lastMouseX=cursorX[0];lastMouseY=cursorY[0];
                         if(tab||up||down) menu.focusNext(up||(tab&&glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS)?-1:1);
-                        PauseMenu.Action action=mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
+                        boolean wasDragging=menu.dragging();
+                        PauseMenu.Action sliderAction=menu.pointer(point[0],point[1],mouse);
+                        PauseMenu.Action action=wasDragging||menu.dragging()?sliderAction:mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
                         switch(action) {
                             case RESUME -> { paused=false;captureMouse(camera,windowWidth[0],windowHeight[0]); }
                             case RESTART -> { drop.cancel();game.reset();tracer.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
@@ -250,7 +252,9 @@ public class Window {
                         if(cursorX[0]!=lastMouseX||cursorY[0]!=lastMouseY) menu.hover(point[0],point[1]);
                         lastMouseX=cursorX[0];lastMouseY=cursorY[0];
                         if(tab||up||down) menu.focusNext(up||(tab&&glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)==GLFW_PRESS)?-1:1);
-                        PauseMenu.Action action=mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
+                        boolean wasDragging=menu.dragging();
+                        PauseMenu.Action sliderAction=menu.pointer(point[0],point[1],mouse);
+                        PauseMenu.Action action=wasDragging||menu.dragging()?sliderAction:mouse&&!mouseHeld?menu.click(point[0],point[1]):enter?menu.activateFocused():PauseMenu.Action.NONE;
                         switch(action) {
                             case RESUME -> { paused=false;captureMouse(camera,windowWidth[0],windowHeight[0]); }
                             case RESTART -> { drop.cancel();game.reset();backend.setScene(Scene.fromBoard(game.getBoard()));menu.open(HUD.getStatusText(game)); }
@@ -317,3 +321,4 @@ public class Window {
         camera.resetMouseCursor(width/2.0,height/2.0);
     }
 }
+

@@ -30,7 +30,8 @@ public record RenderSettings(Denoiser denoiser,int bounces,int samplesPerFrame,
     }
     public boolean sameSampling(RenderSettings other) {
         return bounces==other.bounces&&samplesPerFrame==other.samplesPerFrame&&maxWidth==other.maxWidth&&maxHeight==other.maxHeight
-            &&graphics.raytracing()==other.graphics.raytracing()&&graphics.upscaler()==other.graphics.upscaler()&&graphics.quality()==other.graphics.quality();
+            &&graphics.raytracing()==other.graphics.raytracing()&&graphics.upscaler()==other.graphics.upscaler()&&graphics.quality()==other.graphics.quality()&&graphics.renderScale()==other.graphics.renderScale()
+            &&graphics.reconstruction()==other.graphics.reconstruction()&&graphics.radianceCache()==other.graphics.radianceCache();
     }
     public RenderSettings withTaa(boolean v) { return new RenderSettings(denoiser,bounces,samplesPerFrame,maxWidth,maxHeight,denoiseStrength,exposure,v,graphics); }
     public RenderSettings withDenoiser(Denoiser v) { return new RenderSettings(v,bounces,samplesPerFrame,maxWidth,maxHeight,denoiseStrength,exposure,taa,graphics); }
@@ -41,3 +42,4 @@ public record RenderSettings(Denoiser denoiser,int bounces,int samplesPerFrame,
     public RenderSettings withExposure(float v) { return new RenderSettings(denoiser,bounces,samplesPerFrame,maxWidth,maxHeight,denoiseStrength,v,taa,graphics); }
     public RenderSettings withGraphics(GraphicsOptions v) { return new RenderSettings(denoiser,bounces,samplesPerFrame,maxWidth,maxHeight,denoiseStrength,exposure,taa,v); }
 }
+
